@@ -1,0 +1,482 @@
+package com.amalkrishna.books;
+
+import android.animation.ValueAnimator;
+import android.app.Activity;
+import android.app.ActivityOptions;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextClock;
+import android.widget.TextView;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
+
+// The library: the focused book large at the top over a wash of its cover's colours, then rows
+// from Audiobookshelf's home shelves (Continue Listening first). Covers sit in Home's glass tiles,
+// and focus lifts, sweeps and glows in the cover's colour, as on Home.
+public class MainActivity extends Activity implements PlayerService.Listener {
+    private static final int TILE = 264, GAP = 40, ROWS_TOP = 372, COVER_PX = 400, BACKDROP_DELAY_MS = 250;
+
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private FrameLayout root;
+    private ImageView backdrop;
+    private TextView kicker, heroTitle, heroMeta, message;
+    private LinearLayout rows, topPills;
+    private ScrollView rowsScroll;
+    private Ui.Pill nowPlaying, libraryPill, account;
+    private String lastData, focusedKey, libraryId, backdropItem;
+    private final List<String[]> libraries = new ArrayList<>(); // {id, name}
+    private boolean loading, askedLogin;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        Ui.init(this);
+        Abs.save(this, getIntent());
+        getWindow().setBackgroundDrawable(Ui.wallpaper());
+        root = new FrameLayout(this);
+        root.setClipChildren(false);
+
+        backdrop = new ImageView(this);
+        backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        backdrop.setAlpha(0f);
+        root.addView(backdrop, new FrameLayout.LayoutParams(-1, -1));
+        View scrim = new View(this);
+        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] {0x8004050E, 0xCC04050E, 0xF004050E}));
+        root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+
+        // The focused book, large, top left.
+        int heroW = Ui.px(1920 - 2 * Ui.MARGIN - 560);
+        kicker = Ui.line(this, Ui.px(26), 0x80FFFFFF, Ui.medium);
+        kicker.setLetterSpacing(0.08f);
+        root.addView(kicker, Ui.at(Ui.px(Ui.MARGIN), Ui.px(92), heroW, -2));
+        heroTitle = Ui.text(this, Ui.px(64), Color.WHITE, Ui.medium);
+        heroTitle.setMaxLines(2);
+        heroTitle.setEllipsize(TextUtils.TruncateAt.END);
+        heroTitle.setLineSpacing(0, 0.95f);
+        root.addView(heroTitle, Ui.at(Ui.px(Ui.MARGIN), Ui.px(132), heroW, -2));
+        heroMeta = Ui.line(this, Ui.px(28), 0xA6FFFFFF, Ui.regular);
+        root.addView(heroMeta, Ui.at(Ui.px(Ui.MARGIN), Ui.px(296), heroW, -2));
+
+        // Clock and pills, top right.
+        TextClock clock = new TextClock(this);
+        clock.setFormat12Hour("h:mm");
+        clock.setFormat24Hour("H:mm");
+        clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, Ui.px(40));
+        clock.setTextColor(0xD9FFFFFF);
+        clock.setTypeface(Ui.light);
+        clock.setFontFeatureSettings("tnum");
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        cp.topMargin = Ui.px(80);
+        cp.rightMargin = Ui.px(Ui.MARGIN);
+        root.addView(clock, cp);
+        topPills = new LinearLayout(this);
+        topPills.setClipChildren(false);
+        nowPlaying = new Ui.Pill(this, LineIcon.PLAY, "Now Playing");
+        nowPlaying.view.setOnClickListener(v -> startActivity(new Intent(this, PlayerActivity.class)));
+        nowPlaying.view.setVisibility(View.GONE);
+        libraryPill = new Ui.Pill(this, LineIcon.LIBRARY, "Library");
+        libraryPill.view.setOnClickListener(v -> pickLibrary());
+        libraryPill.view.setVisibility(View.GONE);
+        LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-2, Ui.px(Ui.PILL_H));
+        topPills.addView(nowPlaying.view, np);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, Ui.px(Ui.PILL_H));
+        lp.leftMargin = Ui.px(24);
+        topPills.addView(libraryPill.view, lp);
+        account = new Ui.Pill(this, LineIcon.USER, "Account");
+        account.view.setOnClickListener(v -> accountMenu());
+        account.view.setVisibility(View.GONE);
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-2, Ui.px(Ui.PILL_H));
+        ap.leftMargin = Ui.px(24);
+        topPills.addView(account.view, ap);
+        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        pp.topMargin = Ui.px(160);
+        pp.rightMargin = Ui.px(Ui.MARGIN);
+        root.addView(topPills, pp);
+
+        // The shelves: one horizontal row each, in a vertical scroll.
+        rowsScroll = new ScrollView(this);
+        rowsScroll.setVerticalScrollBarEnabled(false);
+        rowsScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        rowsScroll.setClipChildren(false);
+        rowsScroll.setVerticalFadingEdgeEnabled(true);
+        rowsScroll.setFadingEdgeLength(Ui.px(48));
+        rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        rows.setClipChildren(false);
+        rows.setPadding(0, Ui.px(8), 0, Ui.px(96));
+        rowsScroll.addView(rows, new FrameLayout.LayoutParams(-1, -2));
+        root.addView(rowsScroll, Ui.at(0, Ui.px(ROWS_TOP), -1, -1));
+
+        // Setup help and errors, in the middle of the screen.
+        message = Ui.text(this, Ui.px(30), 0xD9FFFFFF, Ui.regular);
+        message.setLineSpacing(Ui.px(8), 1f);
+        message.setVisibility(View.GONE);
+        message.setFocusable(true);
+        if (android.os.Build.VERSION.SDK_INT >= 26) message.setDefaultFocusHighlightEnabled(false);
+        message.setOnClickListener(v -> {
+            if (Abs.configured(this)) load();
+            else signIn();
+        });
+        root.addView(message, Ui.at(Ui.px(Ui.MARGIN), Ui.px(ROWS_TOP + 20), Ui.px(1200), -2));
+
+        setContentView(root);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (Abs.save(this, intent)) lastData = null;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        PlayerService.listener = this;
+        changed();
+        load();
+    }
+
+    @Override
+    protected void onPause() {
+        if (PlayerService.listener == this) PlayerService.listener = null;
+        super.onPause();
+    }
+
+    // The Now Playing pill follows the player.
+    @Override
+    public void changed() {
+        PlayerService p = PlayerService.instance;
+        boolean on = p != null && p.itemId != null;
+        nowPlaying.view.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (on) nowPlaying.set(p.isPlaying() ? LineIcon.PAUSE : LineIcon.PLAY,
+                p.title.isEmpty() ? "Now Playing" : p.title);
+    }
+
+    // Fetches the libraries, the listener's progress and the chosen library's shelves in one go,
+    // and rebuilds the rows only if something changed.
+    private void load() {
+        if (!Abs.configured(this)) {
+            // Straight to sign-in the first time; after Back, a prompt instead of a loop.
+            account.view.setVisibility(View.GONE);
+            if (!askedLogin) {
+                askedLogin = true;
+                signIn();
+            }
+            showMessage("Sign in to Audiobookshelf", "Press OK to sign in.");
+            return;
+        }
+        if (loading) return;
+        loading = true;
+        final String wanted = Abs.prefs(this).getString("library", null);
+        Abs.run(() -> {
+            JSONObject libs = (JSONObject) Abs.call(this, "GET", "/api/libraries", null);
+            JSONArray all = libs.getJSONArray("libraries");
+            JSONArray books = new JSONArray();
+            String chosen = null;
+            for (int i = 0; i < all.length(); i++) {
+                JSONObject l = all.getJSONObject(i);
+                if (!"book".equals(l.optString("mediaType"))) continue;
+                books.put(new JSONObject().put("id", l.getString("id")).put("name", l.optString("name")));
+                if (chosen == null || l.getString("id").equals(wanted)) chosen = l.getString("id");
+            }
+            JSONObject out = new JSONObject().put("libraries", books);
+            if (chosen == null) return out;
+            out.put("library", chosen);
+            JSONObject me = (JSONObject) Abs.call(this, "GET", "/api/me", null);
+            JSONObject progress = new JSONObject();
+            JSONArray mp = me.optJSONArray("mediaProgress");
+            for (int i = 0; mp != null && i < mp.length(); i++) {
+                JSONObject p = mp.getJSONObject(i);
+                if (p.isNull("episodeId") || p.optString("episodeId").isEmpty())
+                    progress.put(p.getString("libraryItemId"), p);
+            }
+            out.put("progress", progress);
+            out.put("user", me.optString("username", ""));
+            out.put("shelves", Abs.call(this, "GET", "/api/libraries/" + chosen + "/personalized?limit=20", null));
+            return out;
+        }, (json, err) -> {
+            loading = false;
+            if (!Abs.configured(this)) { // the login ran out while loading
+                load();
+                return;
+            }
+            if (err != null) {
+                if (lastData == null) showMessage("Can't reach Audiobookshelf",
+                        err + "\nServer: " + Abs.server(this) + "\nPress OK to try again.");
+                return;
+            }
+            String data = json.toString();
+            if (data.equals(lastData)) return;
+            lastData = data;
+            build((JSONObject) json);
+        });
+    }
+
+    private void showMessage(String title, String body) {
+        rows.removeAllViews();
+        lastData = null;
+        kicker.setText("BOOKS");
+        heroTitle.setText(title);
+        heroMeta.setText("");
+        message.setText(body);
+        message.setVisibility(View.VISIBLE);
+        message.requestFocus();
+    }
+
+    private void build(JSONObject data) {
+        message.setVisibility(View.GONE);
+        libraries.clear();
+        JSONArray libs = data.optJSONArray("libraries");
+        for (int i = 0; libs != null && i < libs.length(); i++) {
+            JSONObject l = libs.optJSONObject(i);
+            libraries.add(new String[] {l.optString("id"), l.optString("name")});
+        }
+        libraryId = data.optString("library", null);
+        String libraryName = "";
+        for (String[] l : libraries) if (l[0].equals(libraryId)) libraryName = l[1];
+        libraryPill.view.setVisibility(libraries.size() > 1 ? View.VISIBLE : View.GONE);
+        libraryPill.set(LineIcon.LIBRARY, libraryName.isEmpty() ? "Library" : libraryName);
+        kicker.setText(libraryName.toUpperCase(java.util.Locale.ROOT));
+        String user = data.optString("user", "");
+        account.view.setVisibility(View.VISIBLE);
+        account.set(LineIcon.USER, user.isEmpty() ? "Account" : user);
+        if (libraryId == null) {
+            showMessage("No audiobook library", "Audiobookshelf has no book libraries for this user.");
+            return;
+        }
+
+        JSONObject progress = data.optJSONObject("progress");
+        if (progress == null) progress = new JSONObject();
+        rows.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        rows.removeAllViews();
+        View restore = null, first = null;
+        JSONArray shelves = data.optJSONArray("shelves");
+        for (int s = 0; shelves != null && s < shelves.length(); s++) {
+            JSONObject shelf = shelves.optJSONObject(s);
+            if (shelf == null || !"book".equals(shelf.optString("type"))) continue;
+            JSONArray items = shelf.optJSONArray("entities");
+            LinearLayout row = null;
+            for (int i = 0; items != null && i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                JSONObject media = item == null ? null : item.optJSONObject("media");
+                if (media == null || media.optDouble("duration", 0) <= 0) continue; // ebook only: nothing to play
+                if (row == null) row = addRow(shelf.optString("label", ""));
+                String key = shelf.optString("id") + "/" + item.optString("id");
+                View tile = addTile(row, key, item, media, progress.optJSONObject(item.optString("id")));
+                if (first == null) first = tile;
+                if (key.equals(focusedKey)) restore = tile;
+            }
+        }
+        rows.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        if (first == null) {
+            showMessage("Nothing to play yet", "This library has no audiobooks.");
+            return;
+        }
+        (restore != null ? restore : first).requestFocus();
+    }
+
+    private LinearLayout addRow(String label) {
+        TextView head = Ui.line(this, Ui.px(30), 0xCCFFFFFF, Ui.medium);
+        head.setText(label);
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-2, -2);
+        hp.leftMargin = Ui.px(Ui.MARGIN);
+        hp.topMargin = rows.getChildCount() > 0 ? Ui.px(28) : 0;
+        rows.addView(head, hp);
+
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setClipChildren(false);
+        scroll.setClipToPadding(false);
+        scroll.setHorizontalFadingEdgeEnabled(true);
+        scroll.setFadingEdgeLength(Ui.px(Ui.MARGIN));
+        LinearLayout row = new LinearLayout(this);
+        row.setClipChildren(false);
+        row.setClipToPadding(false);
+        row.setPadding(Ui.px(Ui.MARGIN), Ui.px(26), Ui.px(Ui.MARGIN), Ui.px(26));
+        scroll.addView(row, new FrameLayout.LayoutParams(-2, -2));
+        rows.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
+        return row;
+    }
+
+    // A cover in a glass frame, with a thin progress bar for books in progress.
+    private View addTile(LinearLayout row, final String key, final JSONObject item, JSONObject media,
+                         JSONObject progress) {
+        final String itemId = item.optString("id");
+        JSONObject meta = media.optJSONObject("metadata");
+        final String title = meta != null ? meta.optString("title", "") : "";
+        final String author = meta != null ? meta.optString("authorName", "") : "";
+        double duration = media.optDouble("duration", 0);
+        boolean finished = progress != null && progress.optBoolean("isFinished");
+        double done = progress != null ? progress.optDouble("progress", 0) : 0;
+        final String metaLine = author + (author.isEmpty() ? "" : "  ·  ")
+                + (finished ? "Finished" : done > 0 ? Ui.duration(duration * (1 - done)) + " left" : Ui.duration(duration));
+
+        int size = Ui.px(TILE);
+        final FrameLayout card = new FrameLayout(this);
+        GradientDrawable placeholder = new GradientDrawable();
+        placeholder.setColor(0x14FFFFFF);
+        card.setBackground(placeholder);
+        TextView name = Ui.text(this, Ui.px(24), 0x99FFFFFF, Ui.regular);
+        name.setText(title);
+        name.setGravity(Gravity.CENTER);
+        name.setMaxLines(3);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setPadding(Ui.px(20), 0, Ui.px(20), 0);
+        card.addView(name, new FrameLayout.LayoutParams(-1, -1));
+        final ImageView cover = new ImageView(this);
+        cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        card.addView(cover, new FrameLayout.LayoutParams(-1, -1));
+        if (!finished && done > 0) {
+            FrameLayout bar = new FrameLayout(this);
+            GradientDrawable track = new GradientDrawable();
+            track.setCornerRadius(Ui.px(3));
+            track.setColor(0x66000000);
+            bar.setBackground(track);
+            View fill = new View(this);
+            GradientDrawable f = new GradientDrawable();
+            f.setCornerRadius(Ui.px(3));
+            f.setColor(Color.WHITE);
+            fill.setBackground(f);
+            fill.setPivotX(0);
+            fill.setScaleX((float) Math.min(1, done));
+            bar.addView(fill, new FrameLayout.LayoutParams(-1, -1));
+            FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, Ui.px(6), Gravity.BOTTOM);
+            bp.setMargins(Ui.px(18), 0, Ui.px(18), Ui.px(18));
+            card.addView(bar, bp);
+        }
+        final Glass glass = new Glass(Ui.AMBER, Ui.px(Ui.RADIUS), Math.max(1, Ui.px(2)), true);
+        final Shine shine = new Shine();
+        card.setForeground(new LayerDrawable(new Drawable[] {glass, shine}));
+        Ui.round(card, Ui.px(Ui.RADIUS));
+        Ui.focusable(card);
+        card.setTag(key);
+        final Bitmap[] loaded = new Bitmap[1];
+        Abs.cover(this, itemId, COVER_PX, cover, (bmp, tint) -> {
+            loaded[0] = bmp;
+            glass.setGlowColor(tint);
+            if (card.isFocused()) showBackdrop(itemId, bmp);
+        });
+
+        final ValueAnimator[] glowAnim = new ValueAnimator[1];
+        card.setOnFocusChangeListener((v, has) -> {
+            if (has) {
+                focusedKey = key;
+                showHero(title, metaLine);
+                if (loaded[0] != null) showBackdrop(itemId, loaded[0]);
+            }
+            Ui.focusTile(v, glass, shine, glowAnim, has, 1.1f);
+        });
+        card.setOnClickListener(v -> {
+            Intent i = new Intent(this, PlayerActivity.class)
+                    .putExtra(PlayerService.EXTRA_ITEM, itemId)
+                    .putExtra(PlayerActivity.EXTRA_TITLE, title)
+                    .putExtra(PlayerActivity.EXTRA_AUTHOR, author);
+            startActivity(i, ActivityOptions.makeScaleUpAnimation(v, 0, 0, v.getWidth(), v.getHeight()).toBundle());
+        });
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
+        if (row.getChildCount() > 0) lp.leftMargin = Ui.px(GAP);
+        row.addView(card, lp);
+        return card;
+    }
+
+    // Crossfades the big title and its line to the newly focused book, like Home's app name.
+    private void showHero(final String title, final String meta) {
+        if (title.contentEquals(heroTitle.getText()) && heroTitle.getAlpha() > 0f) {
+            heroMeta.setText(meta);
+            return;
+        }
+        for (final View v : new View[] {heroTitle, heroMeta}) {
+            v.animate().cancel();
+            v.animate().alpha(0f).setDuration(v.getAlpha() > 0f ? Ui.NAME_OUT_MS : 0).withEndAction(() -> {
+                if (v == heroTitle) heroTitle.setText(title);
+                else heroMeta.setText(meta);
+                v.setTranslationY(Ui.px(10));
+                v.animate().alpha(1f).translationY(0).setInterpolator(Ui.EASE).setDuration(Ui.NAME_IN_MS).start();
+            }).start();
+        }
+    }
+
+    // A wash of the focused cover's colours behind everything, changed after focus settles so
+    // scrolling along a row doesn't flicker.
+    private final Runnable backdropSwap = new Runnable() {
+        @Override public void run() {
+            if (pendingBackdrop == null) return;
+            Bitmap tiny = Bitmap.createScaledBitmap(pendingBackdrop, 16, 16, true);
+            final BitmapDrawable d = new BitmapDrawable(getResources(), tiny);
+            d.setFilterBitmap(true);
+            backdrop.animate().cancel();
+            backdrop.animate().alpha(0f).setDuration(backdrop.getAlpha() > 0f ? 200 : 0).withEndAction(() -> {
+                backdrop.setImageDrawable(d);
+                backdrop.animate().alpha(0.45f).setDuration(500).setInterpolator(Ui.EASE).start();
+            }).start();
+        }
+    };
+    private Bitmap pendingBackdrop;
+
+    private void showBackdrop(String itemId, Bitmap cover) {
+        if (itemId.equals(backdropItem)) return;
+        backdropItem = itemId;
+        pendingBackdrop = cover;
+        main.removeCallbacks(backdropSwap);
+        main.postDelayed(backdropSwap, BACKDROP_DELAY_MS);
+    }
+
+    private void signIn() {
+        startActivity(new Intent(this, LoginActivity.class));
+    }
+
+    private void accountMenu() {
+        String who = Abs.user(this);
+        List<String> items = new ArrayList<>();
+        items.add("Sign out");
+        Ui.panel(this, (who.isEmpty() ? "Signed in" : who) + " on " + Abs.server(this).replaceFirst("^https?://", ""),
+                items, -1, which -> {
+                    if (PlayerService.instance != null) PlayerService.instance.stop();
+                    Abs.signOut(this);
+                    lastData = null;
+                    focusedKey = null;
+                    askedLogin = false;
+                    load();
+                });
+    }
+
+    private void pickLibrary() {
+        List<String> names = new ArrayList<>();
+        int current = -1;
+        for (int i = 0; i < libraries.size(); i++) {
+            names.add(libraries.get(i)[1]);
+            if (libraries.get(i)[0].equals(libraryId)) current = i;
+        }
+        Ui.panel(this, "Library", names, current, which -> {
+            Abs.prefs(this).edit().putString("library", libraries.get(which)[0]).apply();
+            focusedKey = null;
+            lastData = null;
+            load();
+        });
+    }
+}
