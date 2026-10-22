@@ -322,7 +322,7 @@ final class Abs {
     }
 
     // The cover's main colour, for the inner glow: the average hue of its saturated pixels
-    // (the same idea as Home's icon glow). Greyish covers get Books' amber.
+    // (hues averaged as angles, weighted by saturation). Greyish covers get Books' amber.
     private static int tintOf(String key, Bitmap cover) {
         synchronized (TINTS) {
             Integer known = TINTS.get(key);

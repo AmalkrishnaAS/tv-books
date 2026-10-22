@@ -132,7 +132,7 @@ public class LoginActivity extends Activity implements Discover.Found {
         return lp;
     }
 
-    // A text field in the style of Home's pills: soft glass that brightens when focused.
+    // A text field in the style of the pills: soft glass that brightens when focused.
     private EditText field(String label, String hint, int variation, int imeAction) {
         final EditText f = new EditText(this);
         f.setTag(label);

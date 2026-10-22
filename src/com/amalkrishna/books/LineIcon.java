@@ -1,39 +1,85 @@
 package com.amalkrishna.books;
 
-// From tv-detox (github.com/Ansub/tv-detox), MIT License, Copyright (c) 2026 Ansub Khan. See NOTICE.
-
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 
-// Tiny white outline icons on a 24x24 grid, so the app needs no image resources.
-// Each icon is a list of ops: 0=moveTo x y, 1=lineTo x y, 2=close, 3=circle cx cy r, 4=arc cx cy r start sweep.
+// Thin white outline icons, so the app ships no image files. Each shape adds its strokes to a
+// path on a 24 x 24 grid; the drawable scales that path to its bounds.
 final class LineIcon extends Drawable {
-    static final int[] PLAY = {0, 60, 45, 1, 60, 195, 1, 190, 120, 2};
-    // Added for Books: player controls. Skip arrows circle clockwise (forward) or anticlockwise
-    // (back) with the head at the top; the "30" is the label beside them.
-    static final int[] PAUSE = {0, 88, 58, 1, 88, 182, 0, 152, 58, 1, 152, 182};
-    static final int[] FORWARD = {4, 120, 128, 72, -60, 300, 0, 50, 63, 1, 84, 66, 1, 70, 97};
-    static final int[] BACK = {4, 120, 128, 72, -60, 300, 0, 190, 63, 1, 156, 66, 1, 170, 97};
-    static final int[] CHAPTERS = {0, 92, 70, 1, 200, 70, 0, 92, 120, 1, 200, 120, 0, 92, 170, 1, 200, 170,
-            3, 50, 70, 6, 3, 50, 120, 6, 3, 50, 170, 6};
-    static final int[] SPEED = {4, 120, 150, 84, 180, 180, 0, 120, 150, 1, 168, 100};
-    static final int[] LIBRARY = {0, 50, 60, 1, 50, 190, 0, 95, 60, 1, 95, 190, 0, 140, 66, 1, 190, 182};
-    static final int[] SERVER = {0, 40, 50, 1, 200, 50, 1, 200, 110, 1, 40, 110, 2, 0, 40, 130, 1, 200, 130,
-            1, 200, 190, 1, 40, 190, 2, 3, 72, 80, 6, 3, 72, 160, 6};
-    static final int[] USER = {3, 120, 82, 40, 4, 120, 214, 82, 200, 140};
+    interface Shape { void into(Path p); }
 
-    private final int[] ops;
-    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    static final Shape PLAY = p -> {
+        p.moveTo(7.5f, 5f);
+        p.lineTo(18.5f, 12f);
+        p.lineTo(7.5f, 19f);
+        p.close();
+    };
+    static final Shape PAUSE = p -> {
+        line(p, 8.8f, 5.8f, 8.8f, 18.2f);
+        line(p, 15.2f, 5.8f, 15.2f, 18.2f);
+    };
+    // Skips: a ring open at the top, its arrowhead at the gap, clockwise forward, anticlockwise back.
+    static final Shape FORWARD = p -> {
+        arc(p, 12f, 12.8f, 7.2f, -60f, 300f);
+        p.moveTo(5f, 6.3f);
+        p.lineTo(8.4f, 6.6f);
+        p.lineTo(7f, 9.7f);
+    };
+    static final Shape BACK = p -> {
+        arc(p, 12f, 12.8f, 7.2f, -60f, 300f);
+        p.moveTo(19f, 6.3f);
+        p.lineTo(15.6f, 6.6f);
+        p.lineTo(17f, 9.7f);
+    };
+    static final Shape STOP = p -> p.addRoundRect(new RectF(6.5f, 6.5f, 17.5f, 17.5f), 2f, 2f, Path.Direction.CW);
+    static final Shape CHAPTERS = p -> {
+        for (float y : new float[] {7f, 12f, 17f}) {
+            line(p, 9.2f, y, 20f, y);
+            p.addCircle(5f, y, 0.6f, Path.Direction.CW);
+        }
+    };
+    static final Shape SPEED = p -> {
+        arc(p, 12f, 15f, 8.4f, 180f, 180f);
+        line(p, 12f, 15f, 16.8f, 10f);
+    };
+    static final Shape LIBRARY = p -> {
+        line(p, 5f, 6f, 5f, 19f);
+        line(p, 9.5f, 6f, 9.5f, 19f);
+        line(p, 14f, 6.6f, 19f, 18.2f);
+    };
+    static final Shape SERVER = p -> {
+        p.addRect(4f, 5f, 20f, 11f, Path.Direction.CW);
+        p.addRect(4f, 13f, 20f, 19f, Path.Direction.CW);
+        p.addCircle(7.2f, 8f, 0.6f, Path.Direction.CW);
+        p.addCircle(7.2f, 16f, 0.6f, Path.Direction.CW);
+    };
+    static final Shape USER = p -> {
+        p.addCircle(12f, 8.2f, 4f, Path.Direction.CW);
+        arc(p, 12f, 21.4f, 8.2f, 200f, 140f);
+    };
+
+    private static void line(Path p, float x1, float y1, float x2, float y2) {
+        p.moveTo(x1, y1);
+        p.lineTo(x2, y2);
+    }
+
+    private static void arc(Path p, float cx, float cy, float r, float start, float sweep) {
+        p.addArc(new RectF(cx - r, cy - r, cx + r, cy + r), start, sweep);
+    }
+
     private final Path path = new Path();
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-    LineIcon(int[] ops) {
-        this.ops = ops;
+    LineIcon(Shape shape) {
+        shape.into(path);
         paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(1.6f);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
         paint.setColor(0xEBFFFFFF);
@@ -41,25 +87,10 @@ final class LineIcon extends Drawable {
 
     @Override
     public void draw(Canvas c) {
-        if (ops == null) return;
-        float s = getBounds().width() / 240f; // ops are in tenths of the 24-unit grid
-        paint.setStrokeWidth(16 * s);
-        path.reset();
-        for (int i = 0; i < ops.length; ) {
-            switch (ops[i]) {
-                case 0: path.moveTo(ops[i + 1] * s, ops[i + 2] * s); i += 3; break;
-                case 1: path.lineTo(ops[i + 1] * s, ops[i + 2] * s); i += 3; break;
-                case 2: path.close(); i += 1; break;
-                case 4: // arc: cx cy r startDegrees sweepDegrees
-                    float cx = ops[i + 1] * s, cy = ops[i + 2] * s, r = ops[i + 3] * s;
-                    path.addArc(new RectF(cx - r, cy - r, cx + r, cy + r), ops[i + 4], ops[i + 5]);
-                    i += 6;
-                    break;
-                default: path.addCircle(ops[i + 1] * s, ops[i + 2] * s, ops[i + 3] * s, Path.Direction.CW); i += 4;
-            }
-        }
+        Rect b = getBounds();
         c.save();
-        c.translate(getBounds().left, getBounds().top);
+        c.translate(b.left, b.top);
+        c.scale(b.width() / 24f, b.height() / 24f);
         c.drawPath(path, paint);
         c.restore();
     }

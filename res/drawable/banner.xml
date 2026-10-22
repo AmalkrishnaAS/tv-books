@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 16:9 launcher banner: headphones and the name, on the Home wallpaper colours. -->
+<!-- 16:9 launcher banner: headphones on the app's navy, with the amber accent. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="320dp" android:height="180dp" android:viewportWidth="320" android:viewportHeight="180">
     <path android:fillColor="#FF0D1330" android:pathData="M0,0h320v180h-320z" />

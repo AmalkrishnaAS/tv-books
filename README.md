@@ -1,11 +1,19 @@
 # Books
 
-A lightweight [Audiobookshelf](https://www.audiobookshelf.org/) player for Android TV, styled like [Home](https://github.com/AmalkrishnaAS/tv-detox/tree/main/home), the tvOS-style launcher it was made alongside.
+A lightweight [Audiobookshelf](https://www.audiobookshelf.org/) player for Android TV, with a calm tvOS-style look.
 
-- **Library:** the focused book large at the top, over a soft wash of its cover's colours. Below are rows from Audiobookshelf's home shelves: Continue Listening, Recently Added and the rest. Covers sit in Home's glass tiles. On focus they lift, catch a light sweep and glow in the cover's colour.
-- **Player:** the cover, title, narrator and current chapter, with progress through the book. Pills skip back 30 s, play/pause, skip forward 30 s, pick a chapter, or change the speed (0.8–2×). The remote's media keys work anywhere.
-- **Keeps your place:** progress is sent to Audiobookshelf every 15 seconds and on pause, so your phone and the web pick up where the TV left off. Audio keeps playing when you go back to Home, and stops after 15 minutes paused.
+![The library, with the book that's playing in the corner](docs/library.jpg)
+![The player](docs/player.jpg)
+
+- **Library:** the focused book large at the top, over a soft wash of its cover's colours. Below are rows from Audiobookshelf's home shelves: Continue Listening, Recently Added and the rest. Covers sit in frosted-glass tiles. On focus they lift, catch a light sweep and glow in the cover's colour.
+- **Player:** the cover, title, narrator and current chapter, with progress through the book. Pills skip back 30 s, play/pause, skip forward 30 s, pick a chapter, change the speed (0.8–2×), or stop. The remote's media keys work too.
+- **Now playing:** while a book is loaded, a card in the library's top right shows it with its progress. Select the card to open the player; the buttons beside it play/pause and stop.
+- **Keeps your place:** progress is sent to Audiobookshelf every 15 seconds and on pause, so your phone and the web pick up where the TV left off. Going back from the player to the library keeps it playing. Leaving Books, by the Home button or Back from the library, stops it. It also stops after 15 minutes paused.
 - **Lightweight:** about 60 KB, plain Java, no libraries. It uses Android's own media player with direct play.
+
+## Download
+
+Get `books-<version>.apk` from [Releases](../../releases) and install it with `adb install -r books-<version>.apk`.
 
 ## Build and install
 
@@ -42,7 +50,3 @@ It asks for the key without showing it, checks it against the server, and sends 
 ```sh
 adb uninstall com.amalkrishna.books
 ```
-
-## Credits
-
-The side panel and `LineIcon` are adapted from TV Detox by Ansub Khan (MIT). See [NOTICE](NOTICE).

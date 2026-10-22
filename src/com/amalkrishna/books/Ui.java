@@ -15,22 +15,20 @@ import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.view.Window;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
-import android.widget.BaseAdapter;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ListView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.List;
 import java.util.Locale;
 
-// The look shared with Home: wallpaper, type, focus motion, pills and the side panel.
+// The app's look: wallpaper, type, focus motion, pills and the side sheet.
 // Designed at 1920x1080 and scaled to the TV's UI size by px().
 final class Ui {
     static final int MARGIN = 96, RADIUS = 20, PILL_H = 72;
@@ -56,7 +54,7 @@ final class Ui {
         return Math.round(v * scale);
     }
 
-    // Home's deep navy-to-indigo wallpaper with three soft glows. Drawn by the window: no bitmap.
+    // A deep navy-to-indigo wallpaper with three soft glows. Drawn by the window: no bitmap.
     static Drawable wallpaper() {
         GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                 new int[] {0xFF0D1330, 0xFF080B1D, 0xFF04050E});
@@ -113,7 +111,7 @@ final class Ui {
         v.setClipToOutline(true);
     }
 
-    // Home's focus motion for a glass tile: lift, scale, brighter glass, inner glow and one sweep.
+    // Focus motion for a glass tile: lift, scale, brighter glass, inner glow and one sweep.
     // No elevation shadow: it would show through the translucent glass.
     static void focusTile(View v, Glass glass, Shine shine, ValueAnimator[] glowAnim, boolean has, float grow) {
         if (has) sweep(shine);
@@ -139,13 +137,13 @@ final class Ui {
         a.start();
     }
 
-    // Home's pill: a line icon and a label on a soft rounded background that brightens on focus.
+    // A pill: a line icon and a label on a soft rounded background that brightens on focus.
     static final class Pill {
         final LinearLayout view;
         final ImageView icon;
         final TextView label;
 
-        Pill(Context c, int[] lineIcon, String text) {
+        Pill(Context c, LineIcon.Shape lineIcon, String text) {
             view = new LinearLayout(c);
             view.setOrientation(LinearLayout.HORIZONTAL);
             view.setGravity(Gravity.CENTER_VERTICAL);
@@ -174,7 +172,7 @@ final class Ui {
             });
         }
 
-        void set(int[] lineIcon, String text) {
+        void set(LineIcon.Shape lineIcon, String text) {
             if (lineIcon != shown) {
                 shown = lineIcon;
                 icon.setImageDrawable(new LineIcon(lineIcon));
@@ -182,63 +180,83 @@ final class Ui {
             if (!text.contentEquals(label.getText())) label.setText(text);
         }
 
-        private int[] shown;
+        private LineIcon.Shape shown;
+    }
+
+    // Stops the book, if one is loaded: the position is saved to the server first.
+    static void stopPlayback() {
+        if (PlayerService.instance != null && PlayerService.instance.itemId != null) PlayerService.instance.stop();
+    }
+
+    // Marks a screen opened from inside Books, so the screen it covers doesn't take it for the user
+    // leaving the app (onUserLeaveHint, which stops playback).
+    static android.content.Intent inApp(android.content.Intent i) {
+        return i.addFlags(android.content.Intent.FLAG_ACTIVITY_NO_USER_ACTION);
     }
 
     interface Pick { void at(int which); }
 
-    // Home's side panel: a title, then one row per choice, the current one selected. Back closes it.
-    static void panel(Activity a, String title, final List<String> labels, int current, final Pick pick) {
+    // A sheet on the right: a title and a column of choices, with a dot by the current one, which
+    // also starts with focus. Back closes it.
+    static void sheet(Activity a, String title, List<String> labels, int current, final Pick pick) {
         final Dialog d = new Dialog(a, android.R.style.Theme_Material_Dialog_NoActionBar);
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(px(48), px(92), px(48), px(48));
-
-        TextView head = line(a, px(40), Color.WHITE, medium);
+        LinearLayout column = new LinearLayout(a);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setPadding(px(40), px(88), px(40), px(56));
+        TextView head = line(a, px(38), Color.WHITE, medium);
         head.setText(title);
-        head.setPadding(px(24), 0, px(24), 0);
-        box.addView(head);
+        head.setPadding(px(28), 0, px(28), px(28));
+        column.addView(head);
 
-        ListView list = new ListView(a);
-        list.setDivider(null);
-        list.setVerticalScrollBarEnabled(false);
-        list.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        GradientDrawable focus = new GradientDrawable();
-        focus.setCornerRadius(px(RADIUS));
-        focus.setColor(0x3DFFFFFF);
-        list.setSelector(focus);
-        list.setAdapter(new BaseAdapter() {
-            @Override public int getCount() { return labels.size(); }
-            @Override public Object getItem(int pos) { return labels.get(pos); }
-            @Override public long getItemId(int pos) { return pos; }
-            @Override public View getView(int pos, View convert, ViewGroup parent) {
-                TextView t = convert != null ? (TextView) convert : line(a, px(30), 0xE6FFFFFF, regular);
-                t.setText(labels.get(pos));
-                t.setTextColor(pos == current ? Color.WHITE : 0xB3FFFFFF);
-                t.setTypeface(pos == current ? medium : regular);
-                t.setGravity(Gravity.CENTER_VERTICAL);
-                t.setMinHeight(px(88));
-                t.setPadding(px(24), 0, px(24), 0);
-                return t;
+        LinearLayout items = new LinearLayout(a);
+        items.setOrientation(LinearLayout.VERTICAL);
+        View start = null;
+        for (int i = 0; i < labels.size(); i++) {
+            final int which = i;
+            TextView row = line(a, px(28), 0xC8FFFFFF, regular);
+            row.setText(labels.get(i));
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(px(28), 0, px(28), 0);
+            final GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(px(RADIUS));
+            bg.setColor(Color.TRANSPARENT);
+            row.setBackground(bg);
+            focusable(row);
+            row.setOnFocusChangeListener((v, has) -> bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT));
+            row.setOnClickListener(v -> {
+                d.dismiss();
+                pick.at(which);
+            });
+            if (i == current) {
+                row.setTextColor(Color.WHITE);
+                row.setTypeface(medium);
+                GradientDrawable dot = new GradientDrawable();
+                dot.setShape(GradientDrawable.OVAL);
+                dot.setColor(AMBER);
+                dot.setSize(px(12), px(12));
+                row.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, dot, null);
+                start = row;
             }
-        });
-        list.setOnItemClickListener((parent, v, pos, id) -> {
-            d.dismiss();
-            pick.at(pos);
-        });
-        if (current >= 0) list.setSelection(current);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1f);
-        lp.topMargin = px(36);
-        box.addView(list, lp);
+            if (start == null && i == 0) start = row;
+            items.addView(row, new LinearLayout.LayoutParams(-1, px(84)));
+        }
+        ScrollView scroll = new ScrollView(a);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setVerticalFadingEdgeEnabled(true);
+        scroll.setFadingEdgeLength(px(48));
+        scroll.addView(items);
+        column.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
-        d.setContentView(box);
+        d.setContentView(column);
         Window w = d.getWindow();
         if (w == null) return;
-        w.setBackgroundDrawable(new ColorDrawable(0xF70B0F22));
-        w.setLayout(px(640), -1);
+        w.setBackgroundDrawable(new ColorDrawable(0xF20A0E20));
+        w.setLayout(px(660), -1);
         w.setGravity(Gravity.END);
-        w.setDimAmount(0.5f);
+        w.setDimAmount(0.55f);
         d.show();
+        if (start != null) start.requestFocus();
     }
 
     // "12h 5m", "45m".

@@ -32,7 +32,7 @@ import java.util.List;
 
 // Plays one book at a time and keeps Audiobookshelf in step, so the phone and web pick up where
 // the TV left off. A book is a list of audio tracks; positions are in seconds across the whole book.
-// Keeps playing after Back or Home; stops itself after 15 minutes paused.
+// Keeps playing after Back or the remote's Home button; stops itself after 15 minutes paused.
 public class PlayerService extends Service implements MediaPlayer.OnPreparedListener,
         MediaPlayer.OnCompletionListener, MediaPlayer.OnErrorListener {
 
@@ -396,11 +396,21 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
         }
     }
 
-    // Ends playback: tells the server, then drops the notification and the service.
+    private void abandonFocus() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            if (focusRequest != null) audio.abandonAudioFocusRequest(focusRequest);
+        } else {
+            audio.abandonAudioFocus(onFocusChange);
+        }
+    }
+
+    // Ends playback: tells the server, then gives back audio focus and drops the notification and
+    // the service.
     void stop() {
         if (isPlaying()) pause();
         closeSession();
         release();
+        abandonFocus();
         session.setActive(false);
         stopForeground(true);
         foreground = false;
@@ -460,10 +470,13 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
         changed();
     }
 
+    // One listener for the service's life, so the focus taken is the focus given back in stop().
+    private final AudioManager.OnAudioFocusChangeListener onFocusChange = change -> {
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) pause();
+    };
+
     private boolean requestFocus() {
-        AudioManager.OnAudioFocusChangeListener onChange = change -> {
-            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) pause();
-        };
+        AudioManager.OnAudioFocusChangeListener onChange = onFocusChange;
         if (Build.VERSION.SDK_INT >= 26) {
             if (focusRequest == null) {
                 focusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)

@@ -21,8 +21,8 @@ import java.util.List;
 import java.util.Locale;
 
 // Now playing: the cover on a soft wash of its colours, title and chapter, progress, and a row of
-// pills to skip back, play or pause, skip forward, pick a chapter or change the speed.
-// Back leaves the book playing; the remote's media keys work here and everywhere else.
+// pills to skip back, play or pause, skip forward, pick a chapter, change the speed or stop.
+// Back returns to the library with the book still playing; the Home button stops it.
 public class PlayerActivity extends Activity implements PlayerService.Listener {
     static final String EXTRA_TITLE = "title", EXTRA_AUTHOR = "author";
     private static final int COVER = 560, LEFT = 160, TEXT_X = 820, TOP = 200, TICK_MS = 500;
@@ -117,14 +117,22 @@ public class PlayerActivity extends Activity implements PlayerService.Listener {
         Ui.Pill forward = new Ui.Pill(this, LineIcon.FORWARD, "30");
         Ui.Pill chapters = new Ui.Pill(this, LineIcon.CHAPTERS, "Chapters");
         speedPill = new Ui.Pill(this, LineIcon.SPEED, "1×");
+        Ui.Pill stop = new Ui.Pill(this, LineIcon.STOP, "Stop");
         back.view.setOnClickListener(v -> withPlayer(p -> p.skip(-30)));
         playPill.view.setOnClickListener(v -> withPlayer(PlayerService::toggle));
         forward.view.setOnClickListener(v -> withPlayer(p -> p.skip(30)));
         chapters.view.setOnClickListener(v -> showChapters());
         speedPill.view.setOnClickListener(v -> showSpeeds());
-        for (Ui.Pill p : new Ui.Pill[] {back, playPill, forward, chapters, speedPill}) {
+        // Stop: saves the position, ends the session and the notification, and goes back.
+        stop.view.setOnClickListener(v -> {
+            PlayerService p = PlayerService.instance;
+            if (p != null) p.stop();
+            finish();
+        });
+        for (Ui.Pill p : new Ui.Pill[] {back, playPill, forward, chapters, speedPill, stop}) {
+            p.view.setPadding(Ui.px(22), 0, Ui.px(26), 0);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, Ui.px(Ui.PILL_H));
-            if (controls.getChildCount() > 0) lp.leftMargin = Ui.px(24);
+            if (controls.getChildCount() > 0) lp.leftMargin = Ui.px(16);
             controls.addView(p.view, lp);
         }
         root.addView(controls, Ui.at(Ui.px(TEXT_X), Ui.px(740), -2, -2));
@@ -209,6 +217,12 @@ public class PlayerActivity extends Activity implements PlayerService.Listener {
         refresh();
     }
 
+    @Override
+    protected void onUserLeaveHint() {
+        Ui.stopPlayback();
+        super.onUserLeaveHint();
+    }
+
     private void refresh() {
         PlayerService p = PlayerService.instance;
         boolean ours = p != null && itemId != null && itemId.equals(p.itemId);
@@ -265,7 +279,7 @@ public class PlayerActivity extends Activity implements PlayerService.Listener {
             labels.add(c.title + "   " + Ui.clock(c.start));
             if (c == now) current = i;
         }
-        Ui.panel(this, "Chapters", labels, current, which -> {
+        Ui.sheet(this, "Chapters", labels, current, which -> {
             p.seek(p.chapters.get(which).start);
             refresh();
         });
@@ -280,7 +294,7 @@ public class PlayerActivity extends Activity implements PlayerService.Listener {
             labels.add(speedLabel(speeds[i]));
             if (Math.abs(speeds[i] - now) < 0.01f) current = i;
         }
-        Ui.panel(this, "Speed", labels, current, which -> withPlayer(p -> p.setSpeed(speeds[which])));
+        Ui.sheet(this, "Speed", labels, current, which -> withPlayer(p -> p.setSpeed(speeds[which])));
     }
 
     // The remote's media keys, while this screen is open. (Elsewhere the media session gets them.)

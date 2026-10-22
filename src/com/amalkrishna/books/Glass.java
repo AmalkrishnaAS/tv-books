@@ -15,7 +15,7 @@ import android.graphics.drawable.Drawable;
 
 // A frosted-glass tile: translucent fill, a soft top sheen and a thin edge that catches the light.
 // When focused, a low-key glow in the app's colour fades in along the inside of the edges.
-// Copied from Home. In frame mode (over a book cover) there is no fill, only sheen, edge and glow.
+// In frame mode (over a book cover) there is no fill, only sheen, edge and glow.
 // Android 9 can't blur while drawing on the GPU, so the inner glow is rendered once (in software)
 // into a bitmap per tile and only faded in and out: focus changes allocate nothing.
 final class Glass extends Drawable {
