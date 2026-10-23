@@ -35,14 +35,14 @@ import java.util.List;
 // from Audiobookshelf's home shelves (Continue Listening first). Covers sit in glass tiles, and
 // focus lifts them, sweeps a light across and glows in the cover's colour.
 public class MainActivity extends Activity implements PlayerService.Listener {
-    private static final int TILE = 264, GAP = 40, ROWS_TOP = 372, COVER_PX = 400, BACKDROP_DELAY_MS = 250;
+    private static final int TILE = 264, GAP = 40, ROWS_TOP = 412, RELOAD_AFTER_MS = 30000;
     // The header's two columns: the hero ends a gutter before the widest right-hand item, the
     // now-playing card with its two buttons (MiniPlayer.WIDTH).
-    private static final int HEADER_TOP = 72, HERO_W = 1920 - 2 * Ui.MARGIN - MiniPlayer.WIDTH - 64;
+    private static final int HEADER_TOP = 72, HERO_TOP = 172, HERO_W = 1920 - 2 * Ui.MARGIN - MiniPlayer.WIDTH - 64;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private FrameLayout root;
-    private ImageView backdrop;
+    private Backdrop backdrop;
     private TextView heroTitle, heroMeta, message;
     private LinearLayout rows, topPills;
     private ScrollView rowsScroll;
@@ -50,6 +50,10 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     private Ui.Pill libraryPill, account;
     private MiniPlayer mini;
     private String lastData, focusedKey, libraryId, backdropItem;
+    private long loadedAt;
+    private LinearLayout snappedRow;
+    // A held D-pad moves focus faster than text should re-lay out: the title waits for focus to settle.
+    private final Debounce heroLater = new Debounce(120), backdropLater = new Debounce(300);
     private final List<String[]> libraries = new ArrayList<>(); // {id, name}
     private boolean loading, askedLogin;
 
@@ -58,22 +62,23 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         super.onCreate(state);
         Ui.init(this);
         Abs.save(this, getIntent());
-        getWindow().setBackgroundDrawable(Ui.wallpaper());
         root = new FrameLayout(this);
         root.setClipChildren(false);
+        backdrop = new Backdrop(this, root, new int[] {0x8004050E, 0xCC04050E, 0xF004050E},
+                GradientDrawable.Orientation.TOP_BOTTOM, 0.45f);
 
-        backdrop = new ImageView(this);
-        backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        backdrop.setAlpha(0f);
-        root.addView(backdrop, new FrameLayout.LayoutParams(-1, -1));
-        View scrim = new View(this);
-        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[] {0x8004050E, 0xCC04050E, 0xF004050E}));
-        root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+        // Top row, left: the ways into the rest of the library.
+        LinearLayout nav = new LinearLayout(this);
+        nav.setClipChildren(false);
+        addNav(nav, LineIcon.SEARCH, "Search", BrowseActivity.SEARCH);
+        addNav(nav, LineIcon.GRID, "All books", BrowseActivity.ALL);
+        addNav(nav, LineIcon.LIBRARY, "Series", BrowseActivity.SERIES);
+        addNav(nav, LineIcon.USER, "Authors", BrowseActivity.AUTHORS);
+        root.addView(nav, Ui.at(Ui.px(Ui.MARGIN), Ui.px(HEADER_TOP), -2, Ui.px(Ui.PILL_H)));
 
-        // Header, left: the focused book's title with its author and time left tight underneath.
-        // Right: the utilities on one line (library, account, clock), and under them the book that's
-        // playing, if any. Two columns, so nothing in the header can overlap.
+        // Header, left under the nav: the focused book's title with its author and time left tight
+        // underneath. Right: the utilities on one line (library, account, clock), and under them the
+        // book that's playing, if any. Two columns, so nothing in the header can overlap.
         LinearLayout hero = new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
         heroTitle = Ui.text(this, Ui.px(64), Color.WHITE, Ui.medium);
@@ -85,7 +90,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, -2);
         mlp.topMargin = Ui.px(14);
         hero.addView(heroMeta, mlp);
-        root.addView(hero, Ui.at(Ui.px(Ui.MARGIN), Ui.px(HEADER_TOP + 16), Ui.px(HERO_W), -2));
+        root.addView(hero, Ui.at(Ui.px(Ui.MARGIN), Ui.px(HERO_TOP), Ui.px(HERO_W), -2));
 
         LinearLayout side = new LinearLayout(this);
         side.setOrientation(LinearLayout.VERTICAL);
@@ -128,8 +133,6 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         rowsScroll = new ScrollView(this);
         rowsScroll.setVerticalScrollBarEnabled(false);
         rowsScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        rowsScroll.setVerticalFadingEdgeEnabled(true);
-        rowsScroll.setFadingEdgeLength(Ui.px(48));
         rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
         rows.setClipChildren(false);
@@ -218,6 +221,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
             return;
         }
         if (loading) return;
+        // Coming back from the player or a browse screen: no need to fetch it all again so soon.
+        if (lastData != null && System.currentTimeMillis() - loadedAt < RELOAD_AFTER_MS) return;
         loading = true;
         final String wanted = Abs.prefs(this).getString("library", null);
         Abs.run(() -> {
@@ -257,6 +262,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                         err + "\nServer: " + Abs.server(this) + "\nPress OK to try again.");
                 return;
             }
+            loadedAt = System.currentTimeMillis();
             String data = json.toString();
             if (data.equals(lastData)) return;
             lastData = data;
@@ -297,8 +303,10 @@ public class MainActivity extends Activity implements PlayerService.Listener {
 
         JSONObject progress = data.optJSONObject("progress");
         if (progress == null) progress = new JSONObject();
+        Abs.progress = progress;
         rows.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         rows.removeAllViews();
+        snappedRow = null;
         View restore = null, first = null;
         JSONArray shelves = data.optJSONArray("shelves");
         for (int s = 0; shelves != null && s < shelves.length(); s++) {
@@ -338,8 +346,6 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         scroll.setClipChildren(false);
         scroll.setClipToPadding(false);
-        scroll.setHorizontalFadingEdgeEnabled(true);
-        scroll.setFadingEdgeLength(Ui.px(Ui.MARGIN));
         LinearLayout row = new LinearLayout(this);
         row.setClipChildren(false);
         row.setClipToPadding(false);
@@ -349,8 +355,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         return row;
     }
 
-    // A cover in a glass frame, with a thin progress bar for books in progress.
-    private View addTile(LinearLayout row, final String key, final JSONObject item, JSONObject media,
+    // A cover tile (see Tile) with a thin progress bar for books in progress.
+    private View addTile(final LinearLayout row, final String key, final JSONObject item, JSONObject media,
                          JSONObject progress) {
         final String itemId = item.optString("id");
         JSONObject meta = media.optJSONObject("metadata");
@@ -363,60 +369,22 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 + (finished ? "Finished" : done > 0 ? Ui.duration(duration * (1 - done)) + " left" : Ui.duration(duration));
 
         int size = Ui.px(TILE);
-        final FrameLayout card = new FrameLayout(this);
-        GradientDrawable placeholder = new GradientDrawable();
-        placeholder.setColor(0x14FFFFFF);
-        card.setBackground(placeholder);
-        TextView name = Ui.text(this, Ui.px(24), 0x99FFFFFF, Ui.regular);
-        name.setText(title);
-        name.setGravity(Gravity.CENTER);
-        name.setMaxLines(3);
-        name.setEllipsize(TextUtils.TruncateAt.END);
-        name.setPadding(Ui.px(20), 0, Ui.px(20), 0);
-        card.addView(name, new FrameLayout.LayoutParams(-1, -1));
-        final ImageView cover = new ImageView(this);
-        cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        card.addView(cover, new FrameLayout.LayoutParams(-1, -1));
-        if (!finished && done > 0) {
-            FrameLayout bar = new FrameLayout(this);
-            GradientDrawable track = new GradientDrawable();
-            track.setCornerRadius(Ui.px(3));
-            track.setColor(0x66000000);
-            bar.setBackground(track);
-            View fill = new View(this);
-            GradientDrawable f = new GradientDrawable();
-            f.setCornerRadius(Ui.px(3));
-            f.setColor(Color.WHITE);
-            fill.setBackground(f);
-            fill.setPivotX(0);
-            fill.setScaleX((float) Math.min(1, done));
-            bar.addView(fill, new FrameLayout.LayoutParams(-1, -1));
-            FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, Ui.px(6), Gravity.BOTTOM);
-            bp.setMargins(Ui.px(18), 0, Ui.px(18), Ui.px(18));
-            card.addView(bar, bp);
-        }
-        final Glass glass = new Glass(Ui.AMBER, Ui.px(Ui.RADIUS), Math.max(1, Ui.px(2)), true);
-        final Shine shine = new Shine();
-        card.setForeground(new LayerDrawable(new Drawable[] {glass, shine}));
-        Ui.round(card, Ui.px(Ui.RADIUS));
-        Ui.focusable(card);
+        final Tile card = new Tile(this, size, size, false, 1.1f);
+        card.bind(title, finished ? 1 : done);
         card.setTag(key);
-        final Bitmap[] loaded = new Bitmap[1];
-        Abs.cover(this, itemId, COVER_PX, cover, (bmp, tint) -> {
+        final android.graphics.Bitmap[] loaded = new android.graphics.Bitmap[1];
+        Abs.cover(this, itemId, size, card.cover, (bmp, tint) -> {
             loaded[0] = bmp;
-            glass.setGlowColor(tint);
+            card.setTint(tint);
             if (card.isFocused()) showBackdrop(itemId, bmp);
         });
-
-        final ValueAnimator[] glowAnim = new ValueAnimator[1];
         card.setOnFocusChangeListener((v, has) -> {
-            if (has) {
-                focusedKey = key;
-                showHero(title, metaLine);
-                if (loaded[0] != null) showBackdrop(itemId, loaded[0]);
-                snapToRow(row);
-            }
-            Ui.focusTile(v, glass, shine, glowAnim, has, 1.1f);
+            card.focus(has, false);
+            if (!has) return;
+            focusedKey = key;
+            heroLater.run(() -> showHero(title, metaLine));
+            if (loaded[0] != null) showBackdrop(itemId, loaded[0]);
+            snapToRow(row);
         });
         card.setOnClickListener(v -> {
             Intent i = new Intent(this, PlayerActivity.class)
@@ -435,6 +403,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     // Scrolls so the focused row's label sits at the top of the list, rather than the minimum that
     // shows the tile (which leaves the label sliced at the edge).
     private void snapToRow(LinearLayout row) {
+        if (row == snappedRow) return; // moving along a row: nothing to scroll
+        snappedRow = row;
         int index = rows.indexOfChild((View) row.getParent());
         if (index < 1) return;
         final View label = rows.getChildAt(index - 1);
@@ -458,33 +428,29 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         }
     }
 
-    // A wash of the focused cover's colours behind everything, changed after focus settles so
-    // scrolling along a row doesn't flicker.
-    private final Runnable backdropSwap = new Runnable() {
-        @Override public void run() {
-            if (pendingBackdrop == null) return;
-            Bitmap tiny = Bitmap.createScaledBitmap(pendingBackdrop, 16, 16, true);
-            final BitmapDrawable d = new BitmapDrawable(getResources(), tiny);
-            d.setFilterBitmap(true);
-            backdrop.animate().cancel();
-            backdrop.animate().alpha(0f).setDuration(backdrop.getAlpha() > 0f ? 200 : 0).withEndAction(() -> {
-                backdrop.setImageDrawable(d);
-                backdrop.animate().alpha(0.45f).setDuration(500).setInterpolator(Ui.EASE).start();
-            }).start();
-        }
-    };
-    private Bitmap pendingBackdrop;
-
-    private void showBackdrop(String itemId, Bitmap cover) {
+    // A wash of the focused cover's colours behind everything, changed once focus settles so
+    // moving along a row doesn't re-render it for every tile.
+    private void showBackdrop(String itemId, final android.graphics.Bitmap cover) {
         if (itemId.equals(backdropItem)) return;
         backdropItem = itemId;
-        pendingBackdrop = cover;
-        main.removeCallbacks(backdropSwap);
-        main.postDelayed(backdropSwap, BACKDROP_DELAY_MS);
+        backdropLater.run(() -> backdrop.show(cover));
     }
 
     private void signIn() {
         startActivity(Ui.inApp(new Intent(this, LoginActivity.class)));
+    }
+
+    private void addNav(LinearLayout nav, LineIcon.Shape icon, String label, final String mode) {
+        Ui.Pill p = new Ui.Pill(this, icon, label);
+        p.view.setOnClickListener(v -> {
+            if (libraryId == null) return;
+            startActivity(Ui.inApp(new Intent(this, BrowseActivity.class)
+                    .putExtra(BrowseActivity.EXTRA_MODE, mode)
+                    .putExtra(BrowseActivity.EXTRA_LIBRARY, libraryId)));
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, Ui.px(Ui.PILL_H));
+        if (nav.getChildCount() > 0) lp.leftMargin = Ui.px(16);
+        nav.addView(p.view, lp);
     }
 
     private void accountMenu() {

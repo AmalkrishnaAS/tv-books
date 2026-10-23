@@ -59,6 +59,21 @@ final class LineIcon extends Drawable {
         p.addCircle(7.2f, 8f, 0.6f, Path.Direction.CW);
         p.addCircle(7.2f, 16f, 0.6f, Path.Direction.CW);
     };
+    static final Shape SEARCH = p -> {
+        p.addCircle(10.5f, 10.5f, 6f, Path.Direction.CW);
+        line(p, 15f, 15f, 20f, 20f);
+    };
+    static final Shape GRID = p -> {
+        p.addRoundRect(new RectF(4.5f, 4.5f, 10.5f, 10.5f), 1.2f, 1.2f, Path.Direction.CW);
+        p.addRoundRect(new RectF(13.5f, 4.5f, 19.5f, 10.5f), 1.2f, 1.2f, Path.Direction.CW);
+        p.addRoundRect(new RectF(4.5f, 13.5f, 10.5f, 19.5f), 1.2f, 1.2f, Path.Direction.CW);
+        p.addRoundRect(new RectF(13.5f, 13.5f, 19.5f, 19.5f), 1.2f, 1.2f, Path.Direction.CW);
+    };
+    static final Shape SORT = p -> {
+        line(p, 5f, 7f, 19f, 7f);
+        line(p, 5f, 12f, 15f, 12f);
+        line(p, 5f, 17f, 11f, 17f);
+    };
     static final Shape USER = p -> {
         p.addCircle(12f, 8.2f, 4f, Path.Direction.CW);
         arc(p, 12f, 21.4f, 8.2f, 200f, 140f);
@@ -77,9 +92,14 @@ final class LineIcon extends Drawable {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     LineIcon(Shape shape) {
+        this(shape, 1.6f, false);
+    }
+
+    // A heavier or filled version, for a primary button.
+    LineIcon(Shape shape, float strokeWidth, boolean filled) {
         shape.into(path);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1.6f);
+        paint.setStyle(filled ? Paint.Style.FILL_AND_STROKE : Paint.Style.STROKE);
+        paint.setStrokeWidth(strokeWidth);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
         paint.setColor(0xEBFFFFFF);

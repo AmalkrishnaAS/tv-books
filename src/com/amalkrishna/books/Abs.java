@@ -27,6 +27,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 // The Audiobookshelf server: its address and how we're signed in, JSON calls and covers.
 // Sign in on the TV (LoginActivity: username and password), or send an API key from a computer:
@@ -36,12 +39,17 @@ import java.util.concurrent.Executors;
 final class Abs {
     private static final String PREFS = "server";
     private static final ExecutorService API = Executors.newSingleThreadExecutor();
-    private static final ExecutorService IMAGES = Executors.newFixedThreadPool(3);
+    // Images load newest request first: when scrolling fast, the covers now on screen come before
+    // the ones already scrolled past (whose requests are dropped once their tile is reused).
+    private static final ExecutorService IMAGES = new ThreadPoolExecutor(3, 3, 0, TimeUnit.MILLISECONDS,
+            new LinkedBlockingDeque<Runnable>() {
+                private static final long serialVersionUID = 1L;
+                @Override public boolean offer(Runnable r) { return offerFirst(r); }
+            });
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    // Covers are decoded as RGB_565 (no alpha), so 16 MB holds about 50 of them at 400 px.
-    private static final LruCache<String, Bitmap> COVERS = new LruCache<String, Bitmap>(16 * 1024 * 1024) {
-        @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
-    };
+    // Covers are decoded as RGB_565 (no alpha) at the size they're shown; the cache gets an eighth
+    // of the app's memory allowance.
+    private static LruCache<String, Bitmap> covers;
     private static final Map<String, Integer> TINTS = new HashMap<>();
 
     interface Done { void got(Object json, String error); }
@@ -276,21 +284,45 @@ final class Abs {
 
     interface CoverDone { void got(Bitmap cover, int tint); }
 
-    // Loads a book's cover at about `size` px into an ImageView (skipped if the view was reused for
-    // another book meanwhile), then reports it with its glow colour.
-    static void cover(final Context c, final String itemId, final int size, final ImageView into, final CoverDone done) {
-        final String key = itemId + "@" + size;
+    private static synchronized LruCache<String, Bitmap> covers(Context c) {
+        if (covers == null) {
+            android.app.ActivityManager am = (android.app.ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+            int mb = am != null ? am.getMemoryClass() : 64;
+            covers = new LruCache<String, Bitmap>(mb * 1024 * 1024 / 8) {
+                @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
+            };
+        }
+        return covers;
+    }
+
+    // A book's cover at about `size` px.
+    static void cover(Context c, String itemId, int size, ImageView into, CoverDone done) {
+        image(c, "/api/items/" + itemId + "/cover?width=" + size + "&format=jpeg", itemId + "@" + size, size, into, done);
+    }
+
+    // An author's photo at about `size` px (none if the author has no photo).
+    static void authorImage(Context c, String authorId, int size, ImageView into, CoverDone done) {
+        image(c, "/api/authors/" + authorId + "/image?width=" + size + "&format=jpeg", "author:" + authorId + "@" + size,
+                size, into, done);
+    }
+
+    // Loads an image into an ImageView, then reports it with its glow colour. If the view has been
+    // reused for something else by the time it's this request's turn (or it's done), it's skipped.
+    private static void image(final Context c, final String path, final String key, final int size,
+                              final ImageView into, final CoverDone done) {
         if (into != null) into.setTag(key);
-        Bitmap hit = COVERS.get(key);
+        final LruCache<String, Bitmap> cache = covers(c);
+        Bitmap hit = cache.get(key);
         if (hit != null) {
             if (into != null) into.setImageBitmap(hit);
             if (done != null) done.got(hit, tintOf(key, hit));
             return;
         }
         IMAGES.execute(() -> {
+            if (into != null && !key.equals(into.getTag())) return; // scrolled away before its turn
             Bitmap b = null;
             try {
-                HttpURLConnection http = open(c, "/api/items/" + itemId + "/cover?width=" + size + "&format=jpeg");
+                HttpURLConnection http = open(c, path);
                 try {
                     if (http.getResponseCode() == 200) {
                         byte[] data;
@@ -308,18 +340,33 @@ final class Abs {
                     http.disconnect();
                 }
             } catch (IOException ignored) {
-                // No cover: the tile keeps its title placeholder.
+                // No image: the tile keeps its placeholder.
             }
             if (b == null) return;
-            COVERS.put(key, b);
-            final Bitmap cover = b;
-            final int tint = tintOf(key, cover);
+            cache.put(key, b);
+            final Bitmap image = b;
+            final int tint = tintOf(key, image);
             MAIN.post(() -> {
-                if (into != null && key.equals(into.getTag())) into.setImageBitmap(cover);
-                if (done != null) done.got(cover, tint);
+                if (into != null && !key.equals(into.getTag())) return;
+                if (into != null) into.setImageBitmap(image);
+                if (done != null) done.got(image, tint);
             });
         });
     }
+
+    // A filter value for /items or /series: base64 of the id, URL-encoded (Audiobookshelf decodes
+    // it with decodeURIComponent, then base64).
+    static String filter(String group, String id) {
+        String b64 = android.util.Base64.encodeToString(id.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
+        try {
+            return group + "." + java.net.URLEncoder.encode(b64, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return group + "." + b64;
+        }
+    }
+
+    // The signed-in user's progress by library item id, kept by the library screen for the others.
+    static JSONObject progress = new JSONObject();
 
     // The cover's main colour, for the inner glow: the average hue of its saturated pixels
     // (hues averaged as angles, weighted by saturation). Greyish covers get Books' amber.

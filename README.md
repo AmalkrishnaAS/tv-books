@@ -9,29 +9,39 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-1.0.0-4C5BD4" alt="Release 1.0.0">
+  <img src="https://img.shields.io/badge/release-1.1.0-4C5BD4" alt="Release 1.1.0">
   <img src="https://img.shields.io/badge/Android%20TV-5.0%2B-3DDC84?logo=android&logoColor=white" alt="Android TV 5.0 or newer">
   <img src="https://img.shields.io/badge/Audiobookshelf-2.26%2B-F0A040?logo=audiobookshelf&logoColor=white" alt="Audiobookshelf 2.26 or newer">
-  <img src="https://img.shields.io/badge/APK-60%20KB-0D1330" alt="APK about 60 KB">
+  <img src="https://img.shields.io/badge/APK-75%20KB-0D1330" alt="APK about 75 KB">
   <img src="https://img.shields.io/badge/Java-no%20libraries-E76F00?logo=openjdk&logoColor=white" alt="Plain Java, no libraries">
 </p>
 
 <p align="center">
-  <img src="docs/library.jpg" width="49%" alt="The library: the focused book's title at the top left, the book that's playing at the top right, and rows of covers below">
-  <img src="docs/player.jpg" width="49%" alt="The player: the cover on the left; title, progress and controls on the right">
+  <img src="docs/library.jpg" width="49%" alt="The library: Search, All books, Series and Authors at the top left, the focused book's title, the book that's playing at the top right, and rows of covers below">
+  <img src="docs/player.jpg" width="49%" alt="The player: the cover and title at the top, a full-width progress bar, and play with skip buttons centred below">
 </p>
 
 ## Features
 
 - **Library:** the focused book large at the top, over a soft wash of its cover's colours. Below are rows from Audiobookshelf's home shelves: Continue Listening, Recently Added and the rest. Covers sit in frosted-glass tiles that lift, catch a light sweep and glow in the cover's colour when focused.
-- **Player:** the cover, title, narrator and current chapter, with progress through the book. Pills skip back 30 s, play/pause, skip forward 30 s, pick a chapter, change the speed (0.8–2×), or stop. The remote's media keys work too.
+- **Browse everything:** Search, All books, Series and Authors, from the top of the library.
+  - **All books:** a grid of the whole library, sorted by title, author, recently added or length. It loads more as you scroll.
+  - **Series:** opening one lists its books in order and starts on the first one you haven't finished.
+  - **Authors:** opening one shows that author's books.
+  - **Search:** titles, authors, series and narrators, updated when you pause typing. Matching series and authors appear above the books.
+- **Player:** the cover, title, author and narrator, and the chapter you're in. Below them are a full-width progress bar and the controls: skip back 30 s, play/pause and skip forward 30 s in the middle, Chapters on the left, and Speed (0.8–2×) and Stop on the right. The remote's media keys work too.
+- **Scrubbing:** select the progress bar, then hold left or right to move through the book. The steps grow the longer you hold: 10 s, then 30 s, 2 min and 5 min. The time and chapter are shown as you go. Press OK, or pause for a moment, to jump; Back cancels. Chapter starts are marked on the bar.
 - **Now playing:** while a book is loaded, a card at the top right of the library shows it with its progress. Select the card to open the player; the buttons beside it play/pause and stop.
 - **Keeps your place:** progress is sent to Audiobookshelf every 15 seconds and on pause, so your phone and the web pick up where the TV left off.
   - Going back from the player to the library keeps the book playing.
   - Leaving Books, by the Home button or Back from the library, stops it.
   - It also stops after 15 minutes paused.
 - **Sign in on the TV:** Books finds Audiobookshelf servers on your network, so you only type your username and password. An API key works too.
-- **Lightweight:** about 60 KB, plain Java, no libraries. It uses Android's own media player with direct play.
+- **Built for slow TVs:** about 75 KB, plain Java, no libraries, and Android's own media player with direct play.
+  - The background is a single pre-rendered image.
+  - Focus animations run without redrawing anything.
+  - Covers are fetched at the size they're shown, the ones on screen first.
+  - A held D-pad or fast typing only updates the screen once things settle.
 
 ## Requirements
 
@@ -51,7 +61,7 @@
 4. **Install:** on the computer, with [Android platform tools](https://developer.android.com/tools/releases/platform-tools) installed, run:
    ```sh
    adb connect <tv-ip>:5555        # accept the prompt on the TV the first time
-   adb install -r books-1.0.0.apk
+   adb install -r books-1.1.0.apk
    ```
 
 ### From a USB stick

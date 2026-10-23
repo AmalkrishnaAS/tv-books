@@ -5,7 +5,6 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputType;
-import android.util.TypedValue;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
@@ -38,9 +37,9 @@ public class LoginActivity extends Activity implements Discover.Found {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         Ui.init(this);
-        getWindow().setBackgroundDrawable(Ui.wallpaper());
         FrameLayout root = new FrameLayout(this);
         root.setClipChildren(false);
+        new Backdrop(this, root, null, GradientDrawable.Orientation.TOP_BOTTOM, 0f);
 
         TextView kicker = Ui.line(this, Ui.px(26), 0x80FFFFFF, Ui.medium);
         kicker.setLetterSpacing(0.08f);
@@ -132,29 +131,9 @@ public class LoginActivity extends Activity implements Discover.Found {
         return lp;
     }
 
-    // A text field in the style of the pills: soft glass that brightens when focused.
     private EditText field(String label, String hint, int variation, int imeAction) {
-        final EditText f = new EditText(this);
+        EditText f = Ui.field(this, hint, variation, imeAction);
         f.setTag(label);
-        f.setSingleLine(true);
-        f.setInputType(InputType.TYPE_CLASS_TEXT | variation);
-        f.setImeOptions(imeAction | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        f.setTextSize(TypedValue.COMPLEX_UNIT_PX, Ui.px(30));
-        f.setTextColor(Color.WHITE);
-        f.setHintTextColor(0x59FFFFFF);
-        f.setHint(hint);
-        f.setTypeface(Ui.regular);
-        f.setPadding(Ui.px(28), 0, Ui.px(28), 0);
-        final GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(Ui.px(Ui.RADIUS));
-        bg.setColor(0x14FFFFFF);
-        bg.setStroke(Math.max(1, Ui.px(2)), 0x1FFFFFFF);
-        f.setBackground(bg);
-        Ui.focusable(f);
-        f.setOnFocusChangeListener((v, has) -> {
-            bg.setColor(has ? 0x33FFFFFF : 0x14FFFFFF);
-            bg.setStroke(Math.max(1, Ui.px(2)), has ? 0x8CFFFFFF : 0x1FFFFFFF);
-        });
         return f;
     }
 

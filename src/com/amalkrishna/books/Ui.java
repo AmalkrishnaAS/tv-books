@@ -183,6 +183,32 @@ final class Ui {
         private LineIcon.Shape shown;
     }
 
+    // A text field in the style of the pills: soft glass that brightens when focused. Pressing OK
+    // opens the TV's keyboard.
+    static android.widget.EditText field(Context c, String hint, int variation, int imeAction) {
+        final android.widget.EditText f = new android.widget.EditText(c);
+        f.setSingleLine(true);
+        f.setInputType(android.text.InputType.TYPE_CLASS_TEXT | variation);
+        f.setImeOptions(imeAction | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        f.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(30));
+        f.setTextColor(Color.WHITE);
+        f.setHintTextColor(0x59FFFFFF);
+        f.setHint(hint);
+        f.setTypeface(regular);
+        f.setPadding(px(28), 0, px(28), 0);
+        final GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(px(RADIUS));
+        bg.setColor(0x14FFFFFF);
+        bg.setStroke(Math.max(1, px(2)), 0x1FFFFFFF);
+        f.setBackground(bg);
+        focusable(f);
+        f.setOnFocusChangeListener((v, has) -> {
+            bg.setColor(has ? 0x33FFFFFF : 0x14FFFFFF);
+            bg.setStroke(Math.max(1, px(2)), has ? 0x8CFFFFFF : 0x1FFFFFFF);
+        });
+        return f;
+    }
+
     // Stops the book, if one is loaded: the position is saved to the server first.
     static void stopPlayback() {
         if (PlayerService.instance != null && PlayerService.instance.itemId != null) PlayerService.instance.stop();
