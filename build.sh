@@ -31,11 +31,20 @@ javac -source 1.8 -target 1.8 -bootclasspath "$PLATFORM:$TOOLS/core-lambda-stubs
 "$TOOLS/d8" --release --min-api 21 --lib "$PLATFORM" --output out/dex $(find out/classes -name '*.class')
 
 # 3. Package, align and sign. The key is created on the first build; keep key.jks, because
-#    Android only installs an update signed with the same key.
+#    Android only installs an update signed with the same key. UNSIGNED=1 stops before signing
+#    (out/books-unsigned.apk), for stores such as F-Droid that sign with their own key.
 cp out/resources.apk out/unsigned.apk
 (cd out/dex && zip -q ../unsigned.apk classes.dex)
 "$TOOLS/zipalign" -f 4 out/unsigned.apk out/aligned.apk
+if [ "${UNSIGNED:-}" = 1 ]; then
+  cp out/aligned.apk out/books-unsigned.apk
+  echo "Built out/books-unsigned.apk ($(wc -c < out/books-unsigned.apk | tr -d ' ') bytes, not signed)"
+  exit 0
+fi
 KEYSTORE=${KEYSTORE:-key.jks}
+# The key's password: KEYSTORE_PASS, else the first line of .keystore-pass (git-ignored), else a
+# default for a newly made key.
+[ -z "${KEYSTORE_PASS:-}" ] && [ -f .keystore-pass ] && KEYSTORE_PASS=$(head -n 1 .keystore-pass)
 KEYSTORE_PASS=${KEYSTORE_PASS:-changeit}
 if [ ! -f "$KEYSTORE" ]; then
   keytool -genkeypair -keystore "$KEYSTORE" -storepass "$KEYSTORE_PASS" -keypass "$KEYSTORE_PASS" \

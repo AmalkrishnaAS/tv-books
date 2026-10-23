@@ -1,0 +1,26 @@
+<p>Books plays your <a href="https://www.audiobookshelf.org/">Audiobookshelf</a> audiobooks on Android TV, with a calm, tvOS-style interface made for the remote.</p>
+
+<p><b>Library:</b> Audiobookshelf's home shelves (Continue Listening, Recently Added and the rest) as rows of covers. The focused book is shown large, over a soft wash of its cover's colours.</p>
+
+<p><b>Browse everything:</b></p>
+<ul>
+<li><b>All books:</b> sorted by title, author, recently added or length.</li>
+<li><b>Series:</b> books in order, starting on the first one you haven't finished.</li>
+<li><b>Authors.</b></li>
+<li><b>Search:</b> titles, authors, series and narrators.</li>
+</ul>
+
+<p><b>Player:</b></p>
+<ul>
+<li>Skip back or forward 30 seconds, chapters, and speeds from 0.8× to 2×.</li>
+<li>Scrub through the book with the remote: hold left or right, and the steps grow the longer you hold.</li>
+<li>The remote's media keys work too.</li>
+</ul>
+
+<p><b>Keeps your place:</b> progress syncs with Audiobookshelf every 15 seconds and when you pause, so your phone and the web pick up where the TV left off.</p>
+
+<p><b>Easy sign-in:</b> Books finds Audiobookshelf servers on your network, so you only type your username and password. API keys work too.</p>
+
+<p><b>Light:</b> about 75 KB. Plain Java with no libraries, using Android's own media player. Built to stay smooth on slow TVs.</p>
+
+<p>Needs Audiobookshelf 2.26 or newer.</p>

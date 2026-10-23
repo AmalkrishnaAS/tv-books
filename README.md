@@ -9,11 +9,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-1.1.0-4C5BD4" alt="Release 1.1.0">
+  <img src="https://img.shields.io/badge/release-1.1.1-4C5BD4" alt="Release 1.1.1">
   <img src="https://img.shields.io/badge/Android%20TV-5.0%2B-3DDC84?logo=android&logoColor=white" alt="Android TV 5.0 or newer">
   <img src="https://img.shields.io/badge/Audiobookshelf-2.26%2B-F0A040?logo=audiobookshelf&logoColor=white" alt="Audiobookshelf 2.26 or newer">
   <img src="https://img.shields.io/badge/APK-75%20KB-0D1330" alt="APK about 75 KB">
   <img src="https://img.shields.io/badge/Java-no%20libraries-E76F00?logo=openjdk&logoColor=white" alt="Plain Java, no libraries">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="Licence: GPL-3.0">
 </p>
 
 <p align="center">
@@ -61,7 +62,7 @@
 4. **Install:** on the computer, with [Android platform tools](https://developer.android.com/tools/releases/platform-tools) installed, run:
    ```sh
    adb connect <tv-ip>:5555        # accept the prompt on the TV the first time
-   adb install -r books-1.1.0.apk
+   adb install -r books-1.1.1.apk
    ```
 
 ### From a USB stick
@@ -112,6 +113,8 @@ sh build.sh                    # creates key.jks on the first build; keep it for
 adb install -r out/books.apk
 ```
 
+`UNSIGNED=1 sh build.sh` stops before signing and writes `out/books-unsigned.apk`, for stores that sign with their own key. Store listing text and images are in `fastlane/metadata/android/`.
+
 ## Remove
 
 ```sh
@@ -119,3 +122,7 @@ adb uninstall com.amalkrishna.books
 ```
 
 You can also uninstall it from **Settings → Apps** on the TV.
+
+## Licence
+
+[GPL-3.0](LICENSE). Books isn't affiliated with the Audiobookshelf project.
