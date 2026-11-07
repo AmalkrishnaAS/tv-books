@@ -47,8 +47,12 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
 
     static final class Track {
         final double start, length;
-        final String path; // the server path; the token is added when the track is loaded
-        Track(double start, double length, String path) { this.start = start; this.length = length; this.path = path; }
+        final String path; // the server path; the token is added when the track is loaded; a downloaded book has its file here
+        final boolean local;
+        Track(double start, double length, String path) { this(start, length, path, false); }
+        Track(double start, double length, String path, boolean local) {
+            this.start = start; this.length = length; this.path = path; this.local = local;
+        }
     }
 
     static final class Chapter {
@@ -68,6 +72,7 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
     private AudioManager audio;
     private AudioFocusRequest focusRequest;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private boolean local; // the book plays from the TV's own storage (Downloads), not a session
     private int track = -1, loads, retries;
     private String loadedToken = ""; // the token baked into the current track's URL
     private boolean prepared, wantPlay, foreground;
@@ -127,10 +132,21 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
         super.onDestroy();
     }
 
-    // Starts an Audiobookshelf playback session for a book and plays from its saved position.
+    // Starts a book. A downloaded copy (Downloads) plays from the TV's storage; otherwise an
+    // Audiobookshelf playback session starts and the book plays from its saved position.
     private void open(final String item) {
         closeSession();
         release();
+        JSONObject m = Downloads.meta(this, item);
+        if (m != null) {
+            try {
+                startLocal(m);
+            } catch (JSONException e) {
+                fail("Couldn't read this book's copy: " + e.getMessage());
+            }
+            return;
+        }
+        local = false;
         itemId = item;
         sessionId = null;
         error = null;
@@ -172,6 +188,46 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
         } catch (JSONException e) {
             fail(e.getMessage());
         }
+    }
+
+    // From a downloaded copy's meta.json, in the shape start() fills from the session.
+    private void startLocal(JSONObject m) throws JSONException {
+        local = true;
+        itemId = m.getString("id");
+        sessionId = "";
+        error = null;
+        title = m.optString("title", "");
+        author = m.optString("author", "");
+        duration = m.optDouble("duration", 0);
+        chapters.clear();
+        JSONArray ch = m.optJSONArray("chapters");
+        for (int i = 0; ch != null && i < ch.length(); i++) {
+            JSONObject c = ch.getJSONObject(i);
+            chapters.add(new Chapter(c.optDouble("start"), c.optDouble("end"), c.optString("title", "Chapter " + (i + 1))));
+        }
+        tracks.clear();
+        JSONArray at = m.getJSONArray("tracks");
+        for (int i = 0; i < at.length(); i++) {
+            JSONObject t = at.getJSONObject(i);
+            tracks.add(new Track(t.optDouble("start"), t.optDouble("length"), localFile(t.getString("f")), true));
+        }
+        if (tracks.isEmpty()) {
+            fail("This book has no audio");
+            return;
+        }
+        double at0 = m.optDouble("pos", 0); // the position when it was downloaded (or last kept)
+        if (at0 >= duration - 5) at0 = 0;   // finished books start again, as streamed ones do
+        lastPosition = at0;
+        session.setActive(true);
+        updateMetadata(null);
+        Abs.cover(this, itemId, 400, null, (cover, tint) -> updateMetadata(cover));
+        load(trackAt(at0), at0);
+        changed();
+    }
+
+    // A track file's absolute path in the app's media storage (Downloads.dir names it).
+    private String localFile(String f) {
+        return new java.io.File(Downloads.dir(this, itemId), f).getAbsolutePath();
     }
 
     private void start(JSONObject s) throws JSONException {
@@ -226,14 +282,20 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
         return 0;
     }
 
-    // Prepares a track and, once ready, seeks to `at` (seconds in the book). The stream URL carries
-    // the token, so it's built after making sure the token is fresh (a password login's lasts an hour).
+    // Prepares a track and, once ready, seeks to `at` (seconds in the book). A downloaded book
+    // prepares its file directly; the stream URL carries the token, so it's built after making
+    // sure the token is fresh (a password login's lasts an hour).
     private void load(final int index, final double at) {
         release();
         track = index;
         startAt = at;
         lastPosition = at;
         final int attempt = ++loads;
+        if (local) {
+            // Already tried and broken? The file is still there; give the player one fresh go.
+            if (attempt == loads) prepare(tracks.get(index).path);
+            return;
+        }
         Abs.run(() -> {
             Abs.ensureFresh(this);
             return Abs.streamUrl(this, tracks.get(index).path);
@@ -245,7 +307,8 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
     }
 
     private void prepare(String url) {
-        loadedToken = Abs.token(this);
+        // A seek reloads the track when the URL's token went stale; a file doesn't go stale.
+        loadedToken = local ? url : Abs.token(this);
         prepared = false;
         player = new MediaPlayer();
         player.setAudioAttributes(new AudioAttributes.Builder()
@@ -301,7 +364,7 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
     }
 
     boolean isPlaying() { return wantPlay && error == null; }
-    boolean isLoading() { return wantPlay && !prepared && error == null && sessionId != null; }
+    boolean isLoading() { return wantPlay && !prepared && error == null && sessionId != null && !sessionId.isEmpty(); }
 
     double position() {
         if (prepared && player != null && track >= 0) {
@@ -326,7 +389,7 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
 
     void play() {
         if (sessionId == null) return;
-        if (sessionId.isEmpty() && itemId != null) {
+        if (sessionId.isEmpty() && !local && itemId != null) {
             // The session was closed at the end of the book: start a new one.
             open(itemId);
             return;
@@ -426,8 +489,34 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
         }
     }
 
-    // Reports the position (and time listened since the last report) to Audiobookshelf.
+    // Reports the position (and time listened since the last report). A streamed book syncs its
+    // session; a downloaded one saves the position here and mirrors it to the server best-effort
+    // (there may be no server, which is the point of the download).
     private void sync(boolean close) {
+        if (local) {
+            if (itemId == null) return;
+            if (playingSince != 0) {
+                long now = SystemClock.elapsedRealtime();
+                listened += (now - playingSince) / 1000.0;
+                playingSince = now;
+            }
+            final double pos = position();
+            final double heard = listened;
+            listened = 0;
+            final boolean done = close || pos >= duration - 5;
+            Downloads.saveProgress(this, itemId, pos, done);
+            try {
+                JSONObject body = new JSONObject()
+                        .put("currentTime", pos)
+                        .put("timeListened", heard)
+                        .put("duration", duration)
+                        .put("isFinished", done);
+                Abs.run(() -> { Abs.call(this, "PATCH", "/api/me/progress/" + itemId, body); return null; }, null);
+            } catch (JSONException ignored) {
+                // The values are plain numbers.
+            }
+            return;
+        }
         if (sessionId == null || sessionId.isEmpty()) return;
         if (playingSince != 0) {
             long now = SystemClock.elapsedRealtime();

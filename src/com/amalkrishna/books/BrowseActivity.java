@@ -139,6 +139,16 @@ public class BrowseActivity extends Activity {
             if (selectedView != null) tileOf(selectedView).focus(has, false);
         });
         grid.setOnItemClickListener((parent, view, position, rowId) -> open(position, view));
+        // Holding OK on a book tile offers its progress and its offline copy.
+        grid.setOnItemLongClickListener((parent, view, position, id) -> {
+            if (position < 0 || position >= items.size()) return false;
+            JSONObject o = items.get(position);
+            if (o.optJSONObject("media") == null) return false; // authors and series aren't books
+            JSONObject meta = o.optJSONObject("media").optJSONObject("metadata");
+            BookMenu.show(this, o.optString("id"),
+                    meta == null ? "" : meta.optString("title", ""), this::restart);
+            return true;
+        });
         grid.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override public void onScrollStateChanged(AbsListView v, int scrollState) {}
             @Override public void onScroll(AbsListView v, int first, int visible, int count) {

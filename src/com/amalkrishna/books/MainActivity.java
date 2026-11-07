@@ -393,6 +393,14 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                     .putExtra(PlayerActivity.EXTRA_AUTHOR, author);
             startActivity(Ui.inApp(i), ActivityOptions.makeScaleUpAnimation(v, 0, 0, v.getWidth(), v.getHeight()).toBundle());
         });
+        // Holding OK (a long press) on a book offers its progress and its offline copy.
+        card.setOnLongClickListener(v -> {
+            BookMenu.show(this, itemId, title, () -> {
+                lastData = null;
+                load();
+            });
+            return true;
+        });
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
         if (row.getChildCount() > 0) lp.leftMargin = Ui.px(GAP);
