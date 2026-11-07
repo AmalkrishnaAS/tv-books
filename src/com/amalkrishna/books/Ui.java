@@ -3,6 +3,7 @@ package com.amalkrishna.books;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
+import android.os.SystemClock;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Outline;
@@ -267,6 +268,9 @@ final class Ui {
     // also starts with focus. Back closes it.
     static void sheet(Activity a, String title, List<String> labels, int current, final Pick pick) {
         final Dialog d = new Dialog(a, android.R.style.Theme_Material_Dialog_NoActionBar);
+        // The hold's trailing key events can still be in flight when the sheet takes focus over;
+        // clicks are ignored for a beat so a leaked one can't pick something on its own.
+        final long settle = android.os.SystemClock.elapsedRealtime() + 250;
         LinearLayout column = new LinearLayout(a);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setPadding(px(40), px(88), px(40), px(56));
@@ -291,6 +295,7 @@ final class Ui {
             focusable(row);
             row.setOnFocusChangeListener((v, has) -> bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT));
             row.setOnClickListener(v -> {
+                if (SystemClock.elapsedRealtime() < settle) return; // too soon to mean anything
                 d.dismiss();
                 pick.at(which);
             });
