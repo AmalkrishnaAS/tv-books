@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 
-first_dir() { for d in "$@"; do [ -d "$d" ] && { echo "$d"; return; }; done; }
+first_dir() { for d in "$@"; do [ -d "$d" ] && { echo "$d"; return; }; done; return 0; }
 
 JAVA_HOME=${JAVA_HOME:-$(first_dir /opt/homebrew/opt/openjdk@17 /usr/local/opt/openjdk@17 /usr/lib/jvm/java-17-openjdk-amd64)}
 [ -n "$JAVA_HOME" ] && PATH="$JAVA_HOME/bin:$PATH"
