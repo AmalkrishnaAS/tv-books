@@ -26,6 +26,7 @@ import android.widget.TextClock;
 import android.widget.TextView;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -192,7 +193,27 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     @Override
     public void changed() {
         mini.update();
+        // A book's home row exists on the server only once it has saved a position (~15 s into
+        // playback); one fresh fetch then, and the row jumps in without an app restart.
+        PlayerService s = PlayerService.instance;
+        if (s != null && s.itemId != null && !s.itemId.equals(reloadedFor)) {
+            reloadedFor = s.itemId;
+            reloadShots = 0;
+            main.removeCallbacks(playbackReload);
+            main.postDelayed(playbackReload, 17000);
+        }
     }
+
+    private String reloadedFor;
+    private int reloadShots;
+    // Two fetches, 17 s apart: the server's shelf cache can lag one refresh behind a fresh
+    // record, but only briefly.
+    private final Runnable playbackReload = new Runnable() {
+        @Override public void run() {
+            load(true);
+            if (++reloadShots < 2) main.postDelayed(this, 17000);
+        }
+    };
 
     // Leaving Books (the Home button, or Back out of the library) stops the book, saving the place.
     @Override
@@ -208,8 +229,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     }
 
     // Fetches the libraries, the listener's progress and the chosen library's shelves in one go,
-    // and rebuilds the rows only if something changed.
-    private void load() {
+    // and rebuilds the rows only if something changed. The forced variant renews even a fresh
+    // fetch (a player's return, a freshly playing book) at the cost of one more small fetch.
+    private void load() { load(false); }
+
+    private void load(boolean force) {
         if (!Abs.configured(this)) {
             // Straight to sign-in the first time; after Back, a prompt instead of a loop.
             account.view.setVisibility(View.GONE);
@@ -221,8 +245,9 @@ public class MainActivity extends Activity implements PlayerService.Listener {
             return;
         }
         if (loading) return;
-        // Coming back from the player or a browse screen: no need to fetch it all again so soon.
-        if (lastData != null && System.currentTimeMillis() - loadedAt < RELOAD_AFTER_MS) return;
+        // Coming back from the player or a browse screen: no need to fetch it all again so
+        // soon — unless the caller is forcing it because playback just changed things.
+        if (!force && lastData != null && System.currentTimeMillis() - loadedAt < RELOAD_AFTER_MS) return;
         loading = true;
         final String wanted = Abs.prefs(this).getString("library", null);
         Abs.run(() -> {
@@ -258,8 +283,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 return;
             }
             if (err != null) {
-                if (lastData == null) showMessage("Can't reach Audiobookshelf",
-                        err + "\nServer: " + Abs.server(this) + "\nPress OK to try again.");
+                if (lastData == null) offlineHome();
                 return;
             }
             loadedAt = System.currentTimeMillis();
@@ -278,6 +302,45 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         message.setText(body);
         message.setVisibility(View.VISIBLE);
         message.requestFocus();
+    }
+
+    // No connection at all: no shelves, no progress. The TV still plays the books kept on its
+    // own storage, so they are the home — with the reason spelled out at their head.
+    private void offlineHome() {
+        JSONObject data = new JSONObject();
+        try {
+            JSONArray metas = Downloads.all(this);
+            if (metas.length() == 0) {
+                showMessage("Audiobookshelf unreachable",
+                        "No connection, and nothing is kept on this TV yet.\nWhile connected, hold OK on a book and choose Download to this TV.\n\nPress OK to try again.");
+                return;
+            }
+            JSONObject progress = new JSONObject();
+            JSONArray entities = new JSONArray();
+            for (int i = 0; i < metas.length(); i++) {
+                JSONObject m = metas.getJSONObject(i);
+                String id = m.optString("id");
+                if (m.optDouble("pos", 0) > 0)
+                    progress.put(id, new JSONObject().put("currentTime", m.optDouble("pos", 0)));
+                entities.put(new JSONObject()
+                        .put("id", id)
+                        .put("media", new JSONObject()
+                                .put("metadata", new JSONObject()
+                                        .put("title", m.optString("title", ""))
+                                        .put("authorName", m.optString("author", "")))
+                                .put("duration", m.optDouble("duration", 0))));
+            }
+            data.put("library", "offline")
+                    .put("user", "offline")
+                    .put("progress", progress)
+                    .put("shelves", new JSONArray().put(new JSONObject()
+                            .put("id", "offline-shelf").put("type", "book")
+                            .put("label", "Audiobookshelf unreachable — books kept on this TV")
+                            .put("entities", entities)));
+        } catch (JSONException ignored) {
+            // Hand-built data out of values already read.
+        }
+        build(data);
     }
 
     private void build(JSONObject data) {
@@ -364,7 +427,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         final String author = meta != null ? meta.optString("authorName", "") : "";
         double duration = media.optDouble("duration", 0);
         boolean finished = progress != null && progress.optBoolean("isFinished");
-        double done = progress != null ? progress.optDouble("progress", 0) : 0;
+        double done = progress == null ? 0 : progress.optDouble("progress", 0);
+        if (done <= 0 && progress != null) { // some record paths don't carry progress: the position does
+            double at = progress.optDouble("currentTime", 0);
+            if (at > 0) done = duration > 0 ? Math.min(1, at / duration) : 0;
+        }
         final String metaLine = author + (author.isEmpty() ? "" : "  ·  ")
                 + (finished ? "Finished" : done > 0 ? Ui.duration(duration * (1 - done)) + " left" : Ui.duration(duration));
 
@@ -393,6 +460,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                     .putExtra(PlayerActivity.EXTRA_AUTHOR, author);
             startActivity(Ui.inApp(i), ActivityOptions.makeScaleUpAnimation(v, 0, 0, v.getWidth(), v.getHeight()).toBundle());
         });
+        // Holding OK on a book offers its progress and its offline copy.
+        Ui.okHold(card, () -> BookMenu.show(this, itemId, title, () -> {
+            lastData = null;
+            load();
+        }));
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
         if (row.getChildCount() > 0) lp.leftMargin = Ui.px(GAP);

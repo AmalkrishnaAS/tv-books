@@ -139,6 +139,16 @@ public class BrowseActivity extends Activity {
             if (selectedView != null) tileOf(selectedView).focus(has, false);
         });
         grid.setOnItemClickListener((parent, view, position, rowId) -> open(position, view));
+        // Holding OK on a book tile offers its progress and its offline copy.
+        Ui.okHold(grid, () -> {
+            final int at = selected;
+            if (at < 0 || at >= items.size()) return;
+            JSONObject o = items.get(at);
+            if (o.optJSONObject("media") == null) return; // authors and series aren't books
+            JSONObject meta = o.optJSONObject("media").optJSONObject("metadata");
+            BookMenu.show(this, o.optString("id"),
+                    meta == null ? "" : meta.optString("title", ""), this::restart);
+        });
         grid.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override public void onScrollStateChanged(AbsListView v, int scrollState) {}
             @Override public void onScroll(AbsListView v, int first, int visible, int count) {
@@ -295,7 +305,11 @@ public class BrowseActivity extends Activity {
         double duration = media == null ? 0 : media.optDouble("duration", 0);
         JSONObject p = Abs.progress.optJSONObject(item.optString("id"));
         boolean finished = p != null && p.optBoolean("isFinished");
-        double done = p != null ? p.optDouble("progress", 0) : 0;
+        double done = p == null ? 0 : p.optDouble("progress", 0);
+        if (done <= 0 && p != null) { // some record paths don't carry progress: the position does
+            double at = p.optDouble("currentTime", 0);
+            if (at > 0) done = duration > 0 ? Math.min(1, at / duration) : 0;
+        }
         String time = finished ? "Finished" : done > 0 ? Ui.duration(duration * (1 - done)) + " left" : Ui.duration(duration);
         return TextUtils.join("  ·  ", nonEmpty(title, author, time));
     }
@@ -475,6 +489,13 @@ public class BrowseActivity extends Activity {
                 String title = meta == null ? "" : meta.optString("title", "");
                 JSONObject p = Abs.progress.optJSONObject(o.optString("id"));
                 double done = p == null ? 0 : p.optBoolean("isFinished") ? 1 : p.optDouble("progress", 0);
+                if (done <= 0 && p != null) { // some record paths don't carry progress: the position does
+                    double at = p.optDouble("currentTime", 0);
+                    if (at > 0 && media != null) {
+                        double len = media.optDouble("duration", 0);
+                        if (len > 0) done = Math.min(1, at / len);
+                    }
+                }
                 tile.bind(title, done);
                 String seq = meta == null ? "" : sequence(meta.optString("seriesName", ""));
                 caption.setText(SERIES_BOOKS.equals(mode) && !seq.isEmpty() ? "Book " + seq + "  ·  " + title : title);

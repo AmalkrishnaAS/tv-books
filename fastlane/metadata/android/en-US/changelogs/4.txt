@@ -1,0 +1,1 @@
+Hold OK on a book to forget its progress or keep an offline copy for listening without the server; downloaded books play locally and sync their position back.

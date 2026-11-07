@@ -1,0 +1,233 @@
+package com.amalkrishna.books;
+
+import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
+
+// Books kept in the TV's own storage, so they play when the server doesn't answer. The
+// Audiobookshelf playback session is repurposed as the source of truth (the fields the
+// player/UI already read), and everything in it needed to play is copied out: the audio
+// track files, chapters, duration, title/author and the position of the download. A
+// downloaded book plays with no session and no server: PlayerService reads the copied
+// meta.json instead, saves the position here, and mirrors it back to the server
+// best-effort when it's reachable again.
+final class Downloads {
+    interface Stat { void stat(String text); }
+
+    private static final ExecutorService RUN = Executors.newSingleThreadExecutor();
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final AtomicReference<String> busy = new AtomicReference<>();
+
+    private Downloads() {}
+
+    // status: files/total as they download, main thread. ended(ok, err): when it all resolves.
+    static void download(final Context c, final String itemId, final Stat status, final Abs.Done ended) {
+        if (!busy.compareAndSet(null, itemId)) {
+            if (ended != null) MAIN.post(() -> ended.got(null, "A book is already downloading"));
+            return;
+        }
+        RUN.execute(() -> {
+            String error = null;
+            try {
+                run(c, itemId, status);
+            } catch (Exception e) {
+                e.printStackTrace(); // the real cause goes to the log; the toast stays human
+                error = "it didn't finish — check the connection and free space";
+            } finally {
+                boolean done = error == null;
+                final String err = error;
+                busy.set(null);
+                if (!done) rm(dir(c, itemId)); // a part-downloaded book is no book
+                if (ended != null) MAIN.post(() -> ended.got(null, done ? null : err));
+            }
+        });
+    }
+
+    static boolean downloading(String itemId) { return itemId != null && itemId.equals(busy.get()); }
+
+    // One whole book: opens a playback session, downloads each track, writes meta.json, closes
+    // the session. Blocking: on the background thread only.
+    private static void run(Context c, String itemId, final Stat status) throws IOException, JSONException {
+        JSONObject body = new JSONObject()
+                .put("clientName", "Books for Android TV")
+                .put("clientVersion", Abs.CLIENT_VERSION)
+                .put("deviceId", Abs.deviceId(c))
+                .put("forceDirectPlay", true)
+                .put("forceTranscode", false)
+                .put("mediaPlayer", "android-mediaplayer");
+        Object r = Abs.call(c, "POST", "/api/items/" + itemId + "/play", body);
+        if (!(r instanceof JSONObject)) throw new IOException("No session");
+        JSONObject s = (JSONObject) r;
+        // If anything below fails, the session on the server must not linger open.
+        try {
+            JSONArray at = s.getJSONArray("audioTracks");
+            JSONArray ch = s.optJSONArray("chapters");
+
+            // Copy each track verbatim: the URLs are the same files the player streams. Long
+            // books can outlast a password login's token, so it's made fresh before each one.
+            JSONArray files = new JSONArray();
+            File d = dir(c, itemId);
+            if (!d.isDirectory() && !d.mkdirs()) throw new IOException("Couldn't make the book's folder");
+            for (int i = 0; i < at.length(); i++) {
+                JSONObject t = at.getJSONObject(i);
+                final int n = i + 1;
+                MAIN.post(() -> { if (status != null) status.stat(n + "/" + at.length()); });
+                String file = "t" + n + ".audio";
+                Abs.ensureFresh(c);
+                save(c, t.getString("contentUrl"), new File(d, file));
+                JSONObject f = new JSONObject()
+                        .put("f", file)
+                        .put("start", t.optDouble("startOffset", 0))
+                        .put("length", t.optDouble("duration", 0));
+                files.put(f);
+            }
+
+            JSONObject meta = new JSONObject()
+                    .put("id", itemId)
+                    .put("title", s.optString("displayTitle", ""))
+                    .put("author", s.optString("displayAuthor", ""))
+                    .put("duration", s.optDouble("duration", 0))
+                    .put("pos", s.optDouble("currentTime", 0))
+                    .put("writtenAt", System.currentTimeMillis())
+                    .put("finished", false)
+                    .put("tracks", files)
+                    .put("chapters", ch == null ? new JSONArray() : ch);
+            write(c, "meta.js", meta);
+            try { // the cover keeps its own file; a missing one just means a placeholder
+                Abs.ensureFresh(c);
+                save(c, "/api/items/" + itemId + "/cover?width=640&format=jpeg", new File(d, "cover.jpg"));
+            } catch (IOException ignored) {
+            }
+        } catch (IOException | JSONException | RuntimeException failedNow) {
+            try { Abs.call(c, "POST", "/api/session/" + s.getString("id") + "/close", null); } catch (Exception ignored) {
+                // The session also closes by itself when it goes unreported.
+            }
+            throw failedNow;
+        }
+
+        try { Abs.call(c, "POST", "/api/session/" + s.getString("id") + "/close", null); } catch (IOException ignored) {
+            // The session also closes by itself when it goes unreported; keep the download.
+        }
+    }
+
+    // Rewrites the local record and returns its timestamp, so the caller can hand the same
+    // stamp to the server: last-write-wins compares apples to apples.
+    static long saveProgress(Context c, String itemId, double seconds, boolean finished) {
+        long stamp = System.currentTimeMillis();
+        try {
+            JSONObject m = meta(c, itemId);
+            if (m == null) return stamp;
+            // The stamp is the tie-breaker against the server's own "lastUpdate": whichever
+            // record was written later is the true position, however they compare in size.
+            m.put("pos", seconds).put("writtenAt", stamp).put("finished", finished);
+            write(c, "meta.js", m);
+        } catch (IOException | JSONException ignored) {
+            // Losing the position sometimes is fine; the book itself is intact.
+        }
+        return stamp;
+    }
+
+    // meta.js is the downloaded book's index: read for the player, "forget progress", removing.
+    static JSONObject meta(Context c, String itemId) {
+        try (InputStream in = new FileInputStream(new File(dir(c, itemId), "meta.js"))) {
+            return (JSONObject) new org.json.JSONTokener(new String(read(in), StandardCharsets.UTF_8)).nextValue();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // Every book kept on this TV, as its meta.js values — the home screen's offline shelf
+    // reads these when the server can't be reached at all.
+    static JSONArray all(Context c) {
+        JSONArray out = new JSONArray();
+        File base = c.getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC);
+        File[] books = base == null ? null : base.listFiles();
+        if (books == null) return out;
+        for (File d : books) {
+            try (InputStream in = new FileInputStream(new File(d, "meta.js"))) {
+                out.put(new org.json.JSONTokener(new String(read(in), StandardCharsets.UTF_8)).nextValue());
+            } catch (Exception ignored) {
+                // A folder without an index isn't a book; nothing else to do.
+            }
+        }
+        return out;
+    }
+
+    static void remove(Context c, String itemId) {
+        rm(dir(c, itemId));
+    }
+
+    // A book's folder: next to the app's own media files (Android/data/<apps>/files/Music), so
+    // multi-GB books land on the TV's media partition, not the small data one. Still private to
+    // this app — no other app can read it, and it's deleted with the app, like all offline media.
+    static File dir(Context c, String itemId) {
+        File base = c.getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC);
+        if (base == null) base = new File(c.getFilesDir(), "music");
+        return new File(base, itemId);
+    }
+
+    private static void write(Context c, String name, JSONObject body) throws IOException, JSONException {
+        File f = new File(dir(c, body.getString("id")), name);
+        // The index is rewritten every few seconds while a downloaded book plays, and a power
+        // cut straight through a rewrite must not lose the whole book: write aside, then swap.
+        File tmp = new File(f.getParent(), name + ".tmp");
+        try (OutputStream out = new FileOutputStream(tmp)) {
+            out.write(body.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        if (!tmp.renameTo(f)) {
+            tmp.delete();
+            throw new IOException("Couldn't save " + name);
+        }
+    }
+
+    // One HTTP GET whose response is a file's bytes, not JSON (the covers use open() in Abs).
+    private static void save(Context c, String path, File out) throws IOException {
+        HttpURLConnection http = (HttpURLConnection) new URL(Abs.server(c) + path).openConnection();
+        try {
+            http.setConnectTimeout(8000);
+            http.setReadTimeout(Math.max(20000, 5000 * 60));
+            String t = Abs.token(c);
+            if (!t.isEmpty()) http.setRequestProperty("Authorization", "Bearer " + t);
+            int code = http.getResponseCode();
+            if (code == 401) throw new IOException("Not signed in");
+            if (code >= 400) throw new IOException("The server answered " + code);
+            try (InputStream in = http.getInputStream(); OutputStream f = new FileOutputStream(out)) {
+                byte[] buf = new byte[16384];
+                for (int n; (n = in.read(buf)) > 0; ) f.write(buf, 0, n);
+            }
+        } finally {
+            http.disconnect();
+        }
+    }
+
+    private static byte[] read(InputStream in) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[16384];
+        for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+        return out.toByteArray();
+    }
+
+    private static void rm(File f) {
+        if (f == null) return;
+        File[] all = f.listFiles();
+        if (all != null) for (File k : all) rm(k);
+        f.delete();
+    }
+}

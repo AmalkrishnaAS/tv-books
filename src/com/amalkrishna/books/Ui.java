@@ -3,6 +3,7 @@ package com.amalkrishna.books;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
+import android.os.SystemClock;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Outline;
@@ -14,6 +15,7 @@ import android.graphics.drawable.LayerDrawable;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.Window;
@@ -222,10 +224,53 @@ final class Ui {
 
     interface Pick { void at(int which); }
 
+    // OK on the remote clicks when tapped; held ~3/4 of a second, the same press turns into a
+    // menu. Some remotes repeat held keys, some don't — so the hold is counted on the clock
+    // (the key stays pressed between its down and its up either way), and the release that
+    // would then click the tile is swallowed. (Views' long-click listeners only ever see
+    // fingers; the remote never sends one.)
+    private static final int HOLD_MS = 700;
+
+    static void okHold(View view, final Runnable menu) {
+        final boolean[] down = {false}, held = {false};
+        final Runnable open = () -> {
+            if (down[0] && !held[0]) {
+                held[0] = true;
+                menu.run();
+            }
+        };
+        view.setOnKeyListener((v, code, event) -> {
+            if (code != KeyEvent.KEYCODE_DPAD_CENTER && code != KeyEvent.KEYCODE_ENTER) return false;
+            switch (event.getAction()) {
+                case KeyEvent.ACTION_DOWN:
+                    if (event.getRepeatCount() == 0) {
+                        // Only the timer decides: some remotes repeat early (400 ms or so),
+                        // and opening on the first repeat would turn a long tap into a menu.
+                        down[0] = true;
+                        held[0] = false;
+                        view.postDelayed(open, HOLD_MS);
+                    }
+                    return held[0];
+                case KeyEvent.ACTION_UP:
+                    down[0] = false;
+                    boolean was = held[0];
+                    held[0] = false;
+                    view.removeCallbacks(open);
+                    return was;               // the hold's release: no click
+                default:
+                    return held[0];
+            }
+        });
+    }
+
+
     // A sheet on the right: a title and a column of choices, with a dot by the current one, which
     // also starts with focus. Back closes it.
     static void sheet(Activity a, String title, List<String> labels, int current, final Pick pick) {
         final Dialog d = new Dialog(a, android.R.style.Theme_Material_Dialog_NoActionBar);
+        // The hold's trailing key events can still be in flight when the sheet takes focus over;
+        // clicks are ignored for a beat so a leaked one can't pick something on its own.
+        final long settle = android.os.SystemClock.elapsedRealtime() + 250;
         LinearLayout column = new LinearLayout(a);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setPadding(px(40), px(88), px(40), px(56));
@@ -250,6 +295,7 @@ final class Ui {
             focusable(row);
             row.setOnFocusChangeListener((v, has) -> bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT));
             row.setOnClickListener(v -> {
+                if (SystemClock.elapsedRealtime() < settle) return; // too soon to mean anything
                 d.dismiss();
                 pick.at(which);
             });
