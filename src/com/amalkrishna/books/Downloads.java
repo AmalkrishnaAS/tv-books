@@ -110,6 +110,11 @@ final class Downloads {
                     .put("tracks", files)
                     .put("chapters", ch == null ? new JSONArray() : ch);
             write(c, "meta.js", meta);
+            try { // the cover keeps its own file; a missing one just means a placeholder
+                Abs.ensureFresh(c);
+                save(c, "/api/items/" + itemId + "/cover?width=640&format=jpeg", new File(d, "cover.jpg"));
+            } catch (IOException ignored) {
+            }
         } catch (IOException | JSONException | RuntimeException failedNow) {
             try { Abs.call(c, "POST", "/api/session/" + s.getString("id") + "/close", null); } catch (Exception ignored) {
                 // The session also closes by itself when it goes unreported.
@@ -146,6 +151,23 @@ final class Downloads {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // Every book kept on this TV, as its meta.js values — the home screen's offline shelf
+    // reads these when the server can't be reached at all.
+    static JSONArray all(Context c) {
+        JSONArray out = new JSONArray();
+        File base = c.getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC);
+        File[] books = base == null ? null : base.listFiles();
+        if (books == null) return out;
+        for (File d : books) {
+            try (InputStream in = new FileInputStream(new File(d, "meta.js"))) {
+                out.put(new org.json.JSONTokener(new String(read(in), StandardCharsets.UTF_8)).nextValue());
+            } catch (Exception ignored) {
+                // A folder without an index isn't a book; nothing else to do.
+            }
+        }
+        return out;
     }
 
     static void remove(Context c, String itemId) {

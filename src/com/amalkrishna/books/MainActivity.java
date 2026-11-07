@@ -26,6 +26,7 @@ import android.widget.TextClock;
 import android.widget.TextView;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -282,8 +283,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 return;
             }
             if (err != null) {
-                if (lastData == null) showMessage("Can't reach Audiobookshelf",
-                        err + "\nServer: " + Abs.server(this) + "\nPress OK to try again.");
+                if (lastData == null) offlineHome();
                 return;
             }
             loadedAt = System.currentTimeMillis();
@@ -302,6 +302,45 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         message.setText(body);
         message.setVisibility(View.VISIBLE);
         message.requestFocus();
+    }
+
+    // No connection at all: no shelves, no progress. The TV still plays the books kept on its
+    // own storage, so they are the home — with the reason spelled out at their head.
+    private void offlineHome() {
+        JSONObject data = new JSONObject();
+        try {
+            JSONArray metas = Downloads.all(this);
+            if (metas.length() == 0) {
+                showMessage("Audiobookshelf unreachable",
+                        "No connection, and nothing is kept on this TV yet.\nWhile connected, hold OK on a book and choose Download to this TV.\n\nPress OK to try again.");
+                return;
+            }
+            JSONObject progress = new JSONObject();
+            JSONArray entities = new JSONArray();
+            for (int i = 0; i < metas.length(); i++) {
+                JSONObject m = metas.getJSONObject(i);
+                String id = m.optString("id");
+                if (m.optDouble("pos", 0) > 0)
+                    progress.put(id, new JSONObject().put("currentTime", m.optDouble("pos", 0)));
+                entities.put(new JSONObject()
+                        .put("id", id)
+                        .put("media", new JSONObject()
+                                .put("metadata", new JSONObject()
+                                        .put("title", m.optString("title", ""))
+                                        .put("authorName", m.optString("author", "")))
+                                .put("duration", m.optDouble("duration", 0))));
+            }
+            data.put("library", "offline")
+                    .put("user", "offline")
+                    .put("progress", progress)
+                    .put("shelves", new JSONArray().put(new JSONObject()
+                            .put("id", "offline-shelf").put("type", "book")
+                            .put("label", "Audiobookshelf unreachable — books kept on this TV")
+                            .put("entities", entities)));
+        } catch (JSONException ignored) {
+            // Hand-built data out of values already read.
+        }
+        build(data);
     }
 
     private void build(JSONObject data) {

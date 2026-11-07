@@ -17,6 +17,8 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -305,20 +307,28 @@ final class Abs {
         return covers;
     }
 
-    // A book's cover at about `size` px.
+    // A book's cover at about `size` px. A downloaded book has its own pixels — they show
+    // offline too, where the server's answer is exactly what it can't deliver.
     static void cover(Context c, String itemId, int size, ImageView into, CoverDone done) {
-        image(c, "/api/items/" + itemId + "/cover?width=" + size + "&format=jpeg", itemId + "@" + size, size, into, done);
+        File kept = Downloads.meta(c, itemId) == null
+                ? null : new File(Downloads.dir(c, itemId), "cover.jpg");
+        if (kept != null && kept.isFile()) {
+            image(c, null, kept, itemId + "@dl@" + size, size, into, done);
+            return;
+        }
+        image(c, "/api/items/" + itemId + "/cover?width=" + size + "&format=jpeg", null, itemId + "@" + size, size, into, done);
     }
 
     // An author's photo at about `size` px (none if the author has no photo).
     static void authorImage(Context c, String authorId, int size, ImageView into, CoverDone done) {
-        image(c, "/api/authors/" + authorId + "/image?width=" + size + "&format=jpeg", "author:" + authorId + "@" + size,
+        image(c, "/api/authors/" + authorId + "/image?width=" + size + "&format=jpeg", null, "author:" + authorId + "@" + size,
                 size, into, done);
     }
 
     // Loads an image into an ImageView, then reports it with its glow colour. If the view has been
     // reused for something else by the time it's this request's turn (or it's done), it's skipped.
-    private static void image(final Context c, final String path, final String key, final int size,
+    // The pixels come from the server (path) or from a downloaded book's own file.
+    private static void image(final Context c, final String path, final File file, final String key, final int size,
                               final ImageView into, final CoverDone done) {
         if (into != null) into.setTag(key);
         final LruCache<String, Bitmap> cache = covers(c);
@@ -332,22 +342,25 @@ final class Abs {
             if (into != null && !key.equals(into.getTag())) return; // scrolled away before its turn
             Bitmap b = null;
             try {
-                HttpURLConnection http = open(c, path);
-                try {
-                    if (http.getResponseCode() == 200) {
-                        byte[] data;
-                        try (InputStream in = http.getInputStream()) { data = read(in); }
-                        BitmapFactory.Options o = new BitmapFactory.Options();
-                        o.inJustDecodeBounds = true;
-                        BitmapFactory.decodeByteArray(data, 0, data.length, o);
-                        o.inSampleSize = 1;
-                        while (Math.min(o.outWidth, o.outHeight) / (o.inSampleSize * 2) >= size) o.inSampleSize *= 2;
-                        o.inJustDecodeBounds = false;
-                        o.inPreferredConfig = Bitmap.Config.RGB_565;
-                        b = BitmapFactory.decodeByteArray(data, 0, data.length, o);
-                    }
-                } finally {
-                    http.disconnect();
+                byte[] data;
+                if (file != null) {
+                    try (InputStream in = new FileInputStream(file)) { data = read(in); }
+                } else {
+                    HttpURLConnection http = open(c, path);
+                    try {
+                        if (http.getResponseCode() != 200) data = null;
+                        else try (InputStream in = http.getInputStream()) { data = read(in); }
+                    } finally { http.disconnect(); }
+                }
+                if (data != null) {
+                    BitmapFactory.Options o = new BitmapFactory.Options();
+                    o.inJustDecodeBounds = true;
+                    BitmapFactory.decodeByteArray(data, 0, data.length, o);
+                    o.inSampleSize = 1;
+                    while (Math.min(o.outWidth, o.outHeight) / (o.inSampleSize * 2) >= size) o.inSampleSize *= 2;
+                    o.inJustDecodeBounds = false;
+                    o.inPreferredConfig = Bitmap.Config.RGB_565;
+                    b = BitmapFactory.decodeByteArray(data, 0, data.length, o);
                 }
             } catch (IOException ignored) {
                 // No image: the tile keeps its placeholder.
