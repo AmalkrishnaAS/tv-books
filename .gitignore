@@ -1,3 +1,7 @@
 out/
 key.jks
 .keystore-pass
+
+# local agent tooling
+.claude/
+.opencode/

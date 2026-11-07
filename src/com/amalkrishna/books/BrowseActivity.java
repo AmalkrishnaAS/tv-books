@@ -140,14 +140,14 @@ public class BrowseActivity extends Activity {
         });
         grid.setOnItemClickListener((parent, view, position, rowId) -> open(position, view));
         // Holding OK on a book tile offers its progress and its offline copy.
-        grid.setOnItemLongClickListener((parent, view, position, id) -> {
-            if (position < 0 || position >= items.size()) return false;
-            JSONObject o = items.get(position);
-            if (o.optJSONObject("media") == null) return false; // authors and series aren't books
+        Ui.okHold(grid, () -> {
+            final int at = selected;
+            if (at < 0 || at >= items.size()) return;
+            JSONObject o = items.get(at);
+            if (o.optJSONObject("media") == null) return; // authors and series aren't books
             JSONObject meta = o.optJSONObject("media").optJSONObject("metadata");
             BookMenu.show(this, o.optString("id"),
                     meta == null ? "" : meta.optString("title", ""), this::restart);
-            return true;
         });
         grid.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override public void onScrollStateChanged(AbsListView v, int scrollState) {}

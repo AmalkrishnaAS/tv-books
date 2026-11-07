@@ -14,6 +14,7 @@ import android.graphics.drawable.LayerDrawable;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.Window;
@@ -221,6 +222,44 @@ final class Ui {
     }
 
     interface Pick { void at(int which); }
+
+    // OK on the remote clicks when tapped; held ~3/4 of a second, the same press turns into a
+    // menu. Some remotes repeat held keys, some don't — so the hold is counted on the clock
+    // (the key stays pressed between its down and its up either way), and the release that
+    // would then click the tile is swallowed. (Views' long-click listeners only ever see
+    // fingers; the remote never sends one.)
+    static void okHold(View view, final Runnable menu) {
+        final boolean[] down = {false}, held = {false};
+        final Runnable open = () -> {
+            if (down[0] && !held[0]) {
+                held[0] = true;
+                menu.run();
+            }
+        };
+        view.setOnKeyListener((v, code, event) -> {
+            if (code != KeyEvent.KEYCODE_DPAD_CENTER && code != KeyEvent.KEYCODE_ENTER) return false;
+            switch (event.getAction()) {
+                case KeyEvent.ACTION_DOWN:
+                    if (event.getRepeatCount() == 0) {
+                        down[0] = true;       // the key is in hand, however the remote repeats
+                        held[0] = false;
+                        view.postDelayed(open, 700);
+                    } else {
+                        open.run();           // repeats just re-check
+                    }
+                    return held[0];
+                case KeyEvent.ACTION_UP:
+                    down[0] = false;
+                    boolean was = held[0];
+                    held[0] = false;
+                    view.removeCallbacks(open);
+                    return was;               // the hold's release: no click
+                default:
+                    return held[0];
+            }
+        });
+    }
+
 
     // A sheet on the right: a title and a column of choices, with a dot by the current one, which
     // also starts with focus. Back closes it.

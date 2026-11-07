@@ -160,7 +160,7 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
         try {
             JSONObject device = new JSONObject()
                     .put("clientName", "Books for Android TV")
-                    .put("clientVersion", "1.1.1")
+                    .put("clientVersion", "1.1.2")
                     .put("deviceId", Abs.deviceId(this))
                     .put("manufacturer", Build.MANUFACTURER)
                     .put("model", Build.MODEL)

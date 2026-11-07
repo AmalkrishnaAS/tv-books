@@ -16,7 +16,7 @@ final class BookMenu {
     interface Redo { void doIt(); }
 
     static void show(final Context c, final String itemId, final String title, final Redo redo) {
-        if (itemId == null || !itemId.startsWith("li_")) return; // authors and series aren't books
+        if (itemId == null || itemId.isEmpty()) return;
         JSONObject p = Abs.progress == null ? null : Abs.progress.optJSONObject(itemId);
         JSONObject m = Downloads.meta(c, itemId); // an offline copy keeps its own progress when away
         boolean heard = (p != null && (p.optBoolean("isFinished") || p.optDouble("progress", 0) > 0))
@@ -33,7 +33,11 @@ final class BookMenu {
         if ("Forget progress".equals(what)) {
             if (playing) PlayerService.instance.stop();
             Downloads.saveProgress(c, itemId, 0, false); // an offline copy forgets along with the server
-            Abs.run(() -> { Abs.call(c, "DELETE", "/api/me/progress/" + itemId, null); return null; },
+            // The progress entry has its own id: it's usually the book's id, but servers
+            // differ, so take it from the progress record itself.
+            JSONObject p = Abs.progress == null ? null : Abs.progress.optJSONObject(itemId);
+            final String id = p != null && !p.optString("id").isEmpty() ? p.optString("id") : itemId;
+            Abs.run(() -> { Abs.call(c, "DELETE", "/api/me/progress/" + id, null); return null; },
                 (json, err) -> {
                     toast(c, err == null ? "Progress gone" : err);
                     redo.doIt();
@@ -41,11 +45,11 @@ final class BookMenu {
         } else if ("Download to this TV".equals(what)) {
             toast(c, "Downloading “" + title + "”…");
             Downloads.download(c, itemId, s -> toast(c, "“" + title + "”  ·  " + s),
-                (ok, err) -> { toast(c, err == null ? "“" + title + "” is on the TV" : err); redo.doIt(); });
+                (ok, err) -> { toast(c, err == null ? "“" + title + "” was downloaded successfully" : "Couldn't download “" + title + "” — " + err); redo.doIt(); });
         } else if ("Remove from this TV".equals(what)) {
             if (playing) PlayerService.instance.stop();
             Downloads.remove(c, itemId);
-            toast(c, "“" + title + "” removed");
+            toast(c, "“" + title + "” was deleted from this TV");
             redo.doIt();
         }
         // "Downloading…" simply closes the sheet: it's a status, not a choice.

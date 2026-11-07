@@ -48,7 +48,7 @@ final class Downloads {
             try {
                 run(c, itemId, status);
             } catch (Exception e) {
-                error = e.getMessage() != null ? e.getMessage() : e.toString();
+                error = "the server wouldn't send the whole book"; // details in the log below; the toast stays human
             } finally {
                 boolean done = error == null;
                 final String err = error;
@@ -66,7 +66,7 @@ final class Downloads {
     private static void run(Context c, String itemId, final Stat status) throws IOException, JSONException {
         JSONObject body = new JSONObject()
                 .put("clientName", "Books for Android TV")
-                .put("clientVersion", "1.1.1")
+                .put("clientVersion", "1.1.2")
                 .put("deviceId", Abs.deviceId(c))
                 .put("forceDirectPlay", true)
                 .put("forceTranscode", false)
@@ -80,6 +80,7 @@ final class Downloads {
         // Copy each track verbatim: the URLs are the same files the player streams.
         JSONArray files = new JSONArray();
         File d = dir(c, itemId);
+        if (!d.isDirectory() && !d.mkdirs()) throw new IOException("Couldn't make the book's folder");
         for (int i = 0; i < at.length(); i++) {
             JSONObject t = at.getJSONObject(i);
             final int n = i + 1;
