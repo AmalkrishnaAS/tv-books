@@ -536,7 +536,9 @@ public class PlayerService extends Service implements MediaPlayer.OnPreparedList
             final double pos = position();
             final double heard = listened;
             listened = 0;
-            final boolean done = close || (duration > 0 && pos >= duration - 5);
+            // Marking finished is the book's end: a close (stop, switch-away) only means the
+            // listening channel closed, wherever in the book it was.
+            final boolean done = duration > 0 && pos >= duration - 5;
             final long stamp = Downloads.saveProgress(this, itemId, pos, done);
             try {
                 // The server arbitrates: a record whose lastUpdate is older than the server's

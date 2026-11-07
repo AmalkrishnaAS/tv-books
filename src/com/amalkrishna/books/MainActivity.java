@@ -192,7 +192,27 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     @Override
     public void changed() {
         mini.update();
+        // A book's home row exists on the server only once it has saved a position (~15 s into
+        // playback); one fresh fetch then, and the row jumps in without an app restart.
+        PlayerService s = PlayerService.instance;
+        if (s != null && s.itemId != null && !s.itemId.equals(reloadedFor)) {
+            reloadedFor = s.itemId;
+            reloadShots = 0;
+            main.removeCallbacks(playbackReload);
+            main.postDelayed(playbackReload, 17000);
+        }
     }
+
+    private String reloadedFor;
+    private int reloadShots;
+    // Two fetches, 17 s apart: the server's shelf cache can lag one refresh behind a fresh
+    // record, but only briefly.
+    private final Runnable playbackReload = new Runnable() {
+        @Override public void run() {
+            load(true);
+            if (++reloadShots < 2) main.postDelayed(this, 17000);
+        }
+    };
 
     // Leaving Books (the Home button, or Back out of the library) stops the book, saving the place.
     @Override
@@ -208,8 +228,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     }
 
     // Fetches the libraries, the listener's progress and the chosen library's shelves in one go,
-    // and rebuilds the rows only if something changed.
-    private void load() {
+    // and rebuilds the rows only if something changed. The forced variant renews even a fresh
+    // fetch (a player's return, a freshly playing book) at the cost of one more small fetch.
+    private void load() { load(false); }
+
+    private void load(boolean force) {
         if (!Abs.configured(this)) {
             // Straight to sign-in the first time; after Back, a prompt instead of a loop.
             account.view.setVisibility(View.GONE);
@@ -221,8 +244,9 @@ public class MainActivity extends Activity implements PlayerService.Listener {
             return;
         }
         if (loading) return;
-        // Coming back from the player or a browse screen: no need to fetch it all again so soon.
-        if (lastData != null && System.currentTimeMillis() - loadedAt < RELOAD_AFTER_MS) return;
+        // Coming back from the player or a browse screen: no need to fetch it all again so
+        // soon — unless the caller is forcing it because playback just changed things.
+        if (!force && lastData != null && System.currentTimeMillis() - loadedAt < RELOAD_AFTER_MS) return;
         loading = true;
         final String wanted = Abs.prefs(this).getString("library", null);
         Abs.run(() -> {
