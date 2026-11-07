@@ -48,7 +48,8 @@ final class Downloads {
             try {
                 run(c, itemId, status);
             } catch (Exception e) {
-                error = "the server wouldn't send the whole book"; // details in the log below; the toast stays human
+                e.printStackTrace(); // the real cause goes to the log; the toast stays human
+                error = "it didn't finish — check the connection and free space";
             } finally {
                 boolean done = error == null;
                 final String err = error;
@@ -66,7 +67,7 @@ final class Downloads {
     private static void run(Context c, String itemId, final Stat status) throws IOException, JSONException {
         JSONObject body = new JSONObject()
                 .put("clientName", "Books for Android TV")
-                .put("clientVersion", "1.1.2")
+                .put("clientVersion", Abs.CLIENT_VERSION)
                 .put("deviceId", Abs.deviceId(c))
                 .put("forceDirectPlay", true)
                 .put("forceTranscode", false)
@@ -74,51 +75,68 @@ final class Downloads {
         Object r = Abs.call(c, "POST", "/api/items/" + itemId + "/play", body);
         if (!(r instanceof JSONObject)) throw new IOException("No session");
         JSONObject s = (JSONObject) r;
-        JSONArray at = s.getJSONArray("audioTracks");
-        JSONArray ch = s.optJSONArray("chapters");
+        // If anything below fails, the session on the server must not linger open.
+        try {
+            JSONArray at = s.getJSONArray("audioTracks");
+            JSONArray ch = s.optJSONArray("chapters");
 
-        // Copy each track verbatim: the URLs are the same files the player streams.
-        JSONArray files = new JSONArray();
-        File d = dir(c, itemId);
-        if (!d.isDirectory() && !d.mkdirs()) throw new IOException("Couldn't make the book's folder");
-        for (int i = 0; i < at.length(); i++) {
-            JSONObject t = at.getJSONObject(i);
-            final int n = i + 1;
-            MAIN.post(() -> { if (status != null) status.stat(n + "/" + at.length()); });
-            String file = "t" + n + ".audio";
-            save(c, t.getString("contentUrl"), new File(d, file));
-            JSONObject f = new JSONObject()
-                    .put("f", file)
-                    .put("start", t.optDouble("startOffset", 0))
-                    .put("length", t.optDouble("duration", 0));
-            files.put(f);
+            // Copy each track verbatim: the URLs are the same files the player streams. Long
+            // books can outlast a password login's token, so it's made fresh before each one.
+            JSONArray files = new JSONArray();
+            File d = dir(c, itemId);
+            if (!d.isDirectory() && !d.mkdirs()) throw new IOException("Couldn't make the book's folder");
+            for (int i = 0; i < at.length(); i++) {
+                JSONObject t = at.getJSONObject(i);
+                final int n = i + 1;
+                MAIN.post(() -> { if (status != null) status.stat(n + "/" + at.length()); });
+                String file = "t" + n + ".audio";
+                Abs.ensureFresh(c);
+                save(c, t.getString("contentUrl"), new File(d, file));
+                JSONObject f = new JSONObject()
+                        .put("f", file)
+                        .put("start", t.optDouble("startOffset", 0))
+                        .put("length", t.optDouble("duration", 0));
+                files.put(f);
+            }
+
+            JSONObject meta = new JSONObject()
+                    .put("id", itemId)
+                    .put("title", s.optString("displayTitle", ""))
+                    .put("author", s.optString("displayAuthor", ""))
+                    .put("duration", s.optDouble("duration", 0))
+                    .put("pos", s.optDouble("currentTime", 0))
+                    .put("writtenAt", System.currentTimeMillis())
+                    .put("finished", false)
+                    .put("tracks", files)
+                    .put("chapters", ch == null ? new JSONArray() : ch);
+            write(c, "meta.js", meta);
+        } catch (IOException | JSONException | RuntimeException failedNow) {
+            try { Abs.call(c, "POST", "/api/session/" + s.getString("id") + "/close", null); } catch (Exception ignored) {
+                // The session also closes by itself when it goes unreported.
+            }
+            throw failedNow;
         }
-
-        JSONObject meta = new JSONObject()
-                .put("id", itemId)
-                .put("title", s.optString("displayTitle", ""))
-                .put("author", s.optString("displayAuthor", ""))
-                .put("duration", s.optDouble("duration", 0))
-                .put("pos", s.optDouble("currentTime", 0))
-                .put("finished", false)
-                .put("tracks", files)
-                .put("chapters", ch == null ? new JSONArray() : ch);
-        write(c, "meta.js", meta);
 
         try { Abs.call(c, "POST", "/api/session/" + s.getString("id") + "/close", null); } catch (IOException ignored) {
             // The session also closes by itself when it goes unreported; keep the download.
         }
     }
 
-    static void saveProgress(Context c, String itemId, double seconds, boolean finished) {
+    // Rewrites the local record and returns its timestamp, so the caller can hand the same
+    // stamp to the server: last-write-wins compares apples to apples.
+    static long saveProgress(Context c, String itemId, double seconds, boolean finished) {
+        long stamp = System.currentTimeMillis();
         try {
             JSONObject m = meta(c, itemId);
-            if (m == null) return;
-            m.put("pos", seconds).put("finished", finished);
+            if (m == null) return stamp;
+            // The stamp is the tie-breaker against the server's own "lastUpdate": whichever
+            // record was written later is the true position, however they compare in size.
+            m.put("pos", seconds).put("writtenAt", stamp).put("finished", finished);
             write(c, "meta.js", m);
         } catch (IOException | JSONException ignored) {
             // Losing the position sometimes is fine; the book itself is intact.
         }
+        return stamp;
     }
 
     // meta.js is the downloaded book's index: read for the player, "forget progress", removing.
@@ -145,8 +163,15 @@ final class Downloads {
 
     private static void write(Context c, String name, JSONObject body) throws IOException, JSONException {
         File f = new File(dir(c, body.getString("id")), name);
-        try (OutputStream out = new FileOutputStream(f)) {
+        // The index is rewritten every few seconds while a downloaded book plays, and a power
+        // cut straight through a rewrite must not lose the whole book: write aside, then swap.
+        File tmp = new File(f.getParent(), name + ".tmp");
+        try (OutputStream out = new FileOutputStream(tmp)) {
             out.write(body.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        if (!tmp.renameTo(f)) {
+            tmp.delete();
+            throw new IOException("Couldn't save " + name);
         }
     }
 

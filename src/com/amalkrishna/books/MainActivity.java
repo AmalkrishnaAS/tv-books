@@ -364,7 +364,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         final String author = meta != null ? meta.optString("authorName", "") : "";
         double duration = media.optDouble("duration", 0);
         boolean finished = progress != null && progress.optBoolean("isFinished");
-        double done = progress != null ? progress.optDouble("progress", 0) : 0;
+        double done = progress == null ? 0 : progress.optDouble("progress", 0);
+        if (done <= 0 && progress != null) { // some record paths don't carry progress: the position does
+            double at = progress.optDouble("currentTime", 0);
+            if (at > 0) done = duration > 0 ? Math.min(1, at / duration) : 0;
+        }
         final String metaLine = author + (author.isEmpty() ? "" : "  ·  ")
                 + (finished ? "Finished" : done > 0 ? Ui.duration(duration * (1 - done)) + " left" : Ui.duration(duration));
 

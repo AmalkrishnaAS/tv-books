@@ -11,6 +11,7 @@ import android.os.Looper;
 import android.util.LruCache;
 import android.widget.ImageView;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
@@ -70,6 +71,7 @@ final class Abs {
     }
 
     // Signed in: with an API key (it doesn't expire), or with a password login's refresh token.
+    static final String CLIENT_VERSION = "1.1.2"; // what playback sessions and downloads report
     static boolean configured(Context c) {
         SharedPreferences p = prefs(c);
         return !server(c).isEmpty() && (!p.getString("key", "").isEmpty() || !p.getString("refresh", "").isEmpty());
@@ -214,7 +216,8 @@ final class Abs {
 
     // An authenticated API call. Blocking: only from a background thread. Returns a JSONObject,
     // a JSONArray, or null if empty. A refused access token is renewed once and the call retried.
-    static Object call(Context c, String method, String path, JSONObject body) throws IOException, JSONException {
+    // The body is a JSONObject, a JSONArray, or null for GETs and bodyless calls.
+    static Object call(Context c, String method, String path, Object body) throws IOException, JSONException {
         ensureFresh(c);
         try {
             return request(server(c), method, path, body, token(c));
@@ -230,13 +233,20 @@ final class Abs {
         Unauthorized() { super("Not signed in (401)"); }
     }
 
-    private static Object request(String server, String method, String path, JSONObject body, String token,
+    private static Object request(String server, String method, String path, Object body, String token,
                                   String... headers) throws IOException, JSONException {
         return request(server, method, path, body, token, 8000, headers);
     }
 
+    // A call on the instant path, where an offline server must answer fast or be skipped:
+    // a book opening waits at most a second and a half for one.
+    static Object quick(Context c, String method, String path) throws IOException, JSONException {
+        ensureFresh(c);
+        return request(server(c), method, path, null, token(c), 1500);
+    }
+
     // One HTTP request, with extra headers as name, value pairs. Blocking.
-    private static Object request(String server, String method, String path, JSONObject body, String token,
+    private static Object request(String server, String method, String path, Object body, String token,
                                   int timeoutMs, String... headers) throws IOException, JSONException {
         if (server.isEmpty()) throw new IOException("No server is set");
         HttpURLConnection http = (HttpURLConnection) new URL(server + path).openConnection();

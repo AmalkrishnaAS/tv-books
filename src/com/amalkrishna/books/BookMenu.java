@@ -44,7 +44,7 @@ final class BookMenu {
                 });
         } else if ("Download to this TV".equals(what)) {
             toast(c, "Downloading “" + title + "”…");
-            Downloads.download(c, itemId, s -> toast(c, "“" + title + "”  ·  " + s),
+            Downloads.download(c, itemId, s -> toast(c, "Downloading “" + title + "”  " + s),
                 (ok, err) -> { toast(c, err == null ? "“" + title + "” was downloaded successfully" : "Couldn't download “" + title + "” — " + err); redo.doIt(); });
         } else if ("Remove from this TV".equals(what)) {
             if (playing) PlayerService.instance.stop();

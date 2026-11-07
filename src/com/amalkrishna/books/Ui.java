@@ -228,6 +228,8 @@ final class Ui {
     // (the key stays pressed between its down and its up either way), and the release that
     // would then click the tile is swallowed. (Views' long-click listeners only ever see
     // fingers; the remote never sends one.)
+    private static final int HOLD_MS = 700;
+
     static void okHold(View view, final Runnable menu) {
         final boolean[] down = {false}, held = {false};
         final Runnable open = () -> {
@@ -241,11 +243,11 @@ final class Ui {
             switch (event.getAction()) {
                 case KeyEvent.ACTION_DOWN:
                     if (event.getRepeatCount() == 0) {
-                        down[0] = true;       // the key is in hand, however the remote repeats
+                        // Only the timer decides: some remotes repeat early (400 ms or so),
+                        // and opening on the first repeat would turn a long tap into a menu.
+                        down[0] = true;
                         held[0] = false;
-                        view.postDelayed(open, 700);
-                    } else {
-                        open.run();           // repeats just re-check
+                        view.postDelayed(open, HOLD_MS);
                     }
                     return held[0];
                 case KeyEvent.ACTION_UP:
